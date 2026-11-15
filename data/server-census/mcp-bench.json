@@ -1,0 +1,568 @@
+[
+ {
+  "benchmark": "MCP-Bench",
+  "server": "OpenAPI Explorer",
+  "language": "node",
+  "n_tools": 2,
+  "example_tools": [
+   "getApiOverview",
+   "getApiOperation"
+  ],
+  "category": "api_wrapper",
+  "backend": "oapis.org (OpenAPI spec summaries), openapisearch.com",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "list_tools itself fetches openapisearch.com and embeds the id list in tool descriptions, so even tool listing needs network; responses can be large spec text.",
+  "evidence": "mcp_servers/openapi-mcp-server/index.js, package.json",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Unit Converter",
+  "language": "python",
+  "n_tools": 16,
+  "example_tools": [
+   "convert_temperature",
+   "convert_length",
+   "convert_mass",
+   "convert_batch"
+  ],
+  "category": "local_compute",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none (fastmcp only)",
+  "dominant_cost": "cpu",
+  "notes": "Pure local arithmetic conversions; trivial per-call CPU.",
+  "evidence": "mcp_servers/unit-converter-mcp/src/unit_converter_mcp/server.py, pyproject.toml",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Wikipedia",
+  "language": "python",
+  "n_tools": 9,
+  "example_tools": [
+   "search_wikipedia",
+   "get_article",
+   "get_summary",
+   "extract_key_facts"
+  ],
+  "category": "search_fetch",
+  "backend": "Wikipedia / MediaWiki API (wikipedia-api + requests)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Optional in-process lru_cache (off by default); get_article returns full article text (large responses); summarize/extract tools do simple local text processing.",
+  "evidence": "mcp_servers/wikipedia-mcp/wikipedia_mcp/server.py, wikipedia_mcp/wikipedia_client.py, requirements.txt",
+  "n_tasks": 18
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Google Maps",
+  "language": "node",
+  "n_tools": 7,
+  "example_tools": [
+   "search_nearby",
+   "maps_directions",
+   "maps_distance_matrix",
+   "maps_elevation"
+  ],
+  "category": "api_wrapper",
+  "backend": "Google Maps Platform APIs (Places, Geocoding, Directions, Distance Matrix, Elevation)",
+  "needs_api_key": true,
+  "state": "stateless",
+  "heavy_init": "none (express + @googlemaps client)",
+  "dominant_cost": "network_wait",
+  "notes": "Runs as Streamable HTTP server on port 3001 keeping per-MCP-session transports in memory; tool calls themselves are stateless; paid/quota-limited API.",
+  "evidence": "mcp_servers/mcp-google-map/src/config.ts, src/services/toolclass.ts, src/core/BaseMcpServer.ts, mcp_servers/commands.json",
+  "n_tasks": 10
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Bibliomantic",
+  "language": "python",
+  "n_tools": 4,
+  "example_tools": [
+   "i_ching_divination",
+   "bibliomantic_consultation",
+   "get_hexagram_details",
+   "server_statistics"
+  ],
+  "category": "local_data",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "cpu",
+  "notes": "Random hexagram generation plus lookup in I Ching text bundled in Python modules; server_statistics reports in-process counters (minor in-memory state).",
+  "evidence": "mcp_servers/bibliomantic-mcp-server/bibliomantic_server.py, enhanced_bibliomantic_server.py, enhanced_iching_core.py",
+  "n_tasks": 2
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "BioMCP",
+  "language": "python",
+  "n_tools": 36,
+  "example_tools": [
+   "article_searcher",
+   "variant_searcher",
+   "trial_searcher",
+   "gene_getter"
+  ],
+  "category": "api_wrapper",
+  "backend": "PubMed/PubTator (NCBI), ClinicalTrials.gov, NCI CTS API, MyVariant/MyGene/MyDisease/MyChem, OpenFDA, cBioPortal, Ensembl, bioRxiv, AlphaGenome",
+  "needs_api_key": true,
+  "state": "persistent",
+  "heavy_init": "moderate: many modules; alphagenome imported lazily only by alphagenome_predictor",
+  "dominant_cost": "network_wait",
+  "notes": "NCI_API_KEY needed only for nci_* tools (others keyless); HTTP responses cached on disk via diskcache in user cache dir; built-in rate limiter/retry/circuit breaker; 'think' tool keeps in-memory thought state.",
+  "evidence": "mcp_servers/biomcp/pyproject.toml, src/biomcp/individual_tools.py, src/biomcp/router.py, src/biomcp/http_client.py",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Call for Papers",
+  "language": "python",
+  "n_tools": 1,
+  "example_tools": [
+   "get_events"
+  ],
+  "category": "search_fetch",
+  "backend": "WikiCFP (HTML scraping)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none (requests, beautifulsoup4)",
+  "dominant_cost": "network_wait",
+  "notes": "Scrapes wikicfp.com HTML search pages with BeautifulSoup; no timeout set on requests.get.",
+  "evidence": "mcp_servers/call-for-papers-mcp/call-for-papers-mcp-main/server.py, app.py, requirements.txt",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Car Price Evaluator",
+  "language": "python",
+  "n_tools": 3,
+  "example_tools": [
+   "getCarBrands",
+   "searchCarPrice",
+   "getCarsByType"
+  ],
+  "category": "api_wrapper",
+  "backend": "FIPE API (parallelum.com.br)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "searchCarPrice makes several sequential HTTP calls (brands -> models -> years -> price) per invocation.",
+  "evidence": "mcp_servers/car-price-mcp-main/server.py, app.py",
+  "n_tasks": 2
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Context7",
+  "language": "node",
+  "n_tools": 2,
+  "example_tools": [
+   "resolve-library-id",
+   "get-library-docs"
+  ],
+  "category": "api_wrapper",
+  "backend": "Context7 API (context7.com)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Returns potentially large documentation text (token-limited); thin proxy.",
+  "evidence": "mcp_servers/context7-mcp/src/index.ts, src/lib/api.ts",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "DEX Paprika",
+  "language": "node",
+  "n_tools": 11,
+  "example_tools": [
+   "getNetworks",
+   "getNetworkPools",
+   "getPoolOHLCV",
+   "search"
+  ],
+  "category": "api_wrapper",
+  "backend": "DexPaprika API (api.dexpaprika.com)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Free tier with rate limits (server surfaces upgrade message on 429).",
+  "evidence": "mcp_servers/dexpaprika-mcp/src/index.js, package.json",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "FruityVice",
+  "language": "python",
+  "n_tools": 1,
+  "example_tools": [
+   "get_fruit_info"
+  ],
+  "category": "api_wrapper",
+  "backend": "Fruityvice API (fruityvice.com)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Single GET per call, tiny response.",
+  "evidence": "mcp_servers/fruityvice-mcp/server.py, app.py",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Game Trends",
+  "language": "python",
+  "n_tools": 7,
+  "example_tools": [
+   "get_steam_trending_games",
+   "get_steam_top_sellers",
+   "get_epic_free_games",
+   "get_all_trending_games"
+  ],
+  "category": "search_fetch",
+  "backend": "Steam store/API, steamcharts.com, Epic Games store (HTML scraping + JSON)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none (aiohttp, bs4, lxml); app lazily created on first call",
+  "dominant_cost": "network_wait",
+  "notes": "Self-imposed 1.5s delay between requests and multiple scraped sources per call, so calls are slow (several seconds); app.py contains a large commented-out older version.",
+  "evidence": "mcp_servers/game-trends-mcp/server.py, app.py, requirements.txt",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Huge Icons",
+  "language": "node",
+  "n_tools": 3,
+  "example_tools": [
+   "list_icons",
+   "search_icons",
+   "get_platform_usage"
+  ],
+  "category": "api_wrapper",
+  "backend": "hugeicons.com/api/icons",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "mixed",
+  "notes": "Downloads full icon catalog on first use and caches it in memory (warm-cache benefit), then fuzzy search locally with fuse.js; get_platform_usage is bundled static text.",
+  "evidence": "mcp_servers/hugeicons-mcp-server/src/index.ts, package.json",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Hugging Face",
+  "language": "python",
+  "n_tools": 10,
+  "example_tools": [
+   "search-models",
+   "get-model-info",
+   "search-datasets",
+   "get-daily-papers"
+  ],
+  "category": "api_wrapper",
+  "backend": "Hugging Face Hub API (huggingface.co/api)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "huggingface_hub import",
+  "dominant_cost": "network_wait",
+  "notes": "Code does not read HF_TOKEN (HfApi() unauthenticated, plain httpx calls) despite commands.json listing it; also exposes 2 prompts.",
+  "evidence": "mcp_servers/huggingface-mcp-server/src/huggingface/server.py, pyproject.toml",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Math MCP",
+  "language": "node",
+  "n_tools": 13,
+  "example_tools": [
+   "add",
+   "mean",
+   "median",
+   "round"
+  ],
+  "category": "local_compute",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "cpu",
+  "notes": "Trivial arithmetic/statistics; essentially zero compute.",
+  "evidence": "mcp_servers/math-mcp/src/index.ts",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "NixOS",
+  "language": "python",
+  "n_tools": 18,
+  "example_tools": [
+   "nixos_search",
+   "nixos_info",
+   "home_manager_search",
+   "darwin_search"
+  ],
+  "category": "search_fetch",
+  "backend": "search.nixos.org Elasticsearch backend, home-manager and nix-darwin HTML docs, NixHub",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none (requests, bs4)",
+  "dominant_cost": "mixed",
+  "notes": "home_manager/darwin tools download and BeautifulSoup-parse large HTML option pages each call (30s timeout); small in-memory channel cache.",
+  "evidence": "mcp_servers/mcp-nixos/mcp_nixos/server.py, requirements.txt",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "OSINT Intelligence",
+  "language": "python",
+  "n_tools": 7,
+  "example_tools": [
+   "whois_lookup",
+   "nmap_scan",
+   "dnsrecon_lookup",
+   "dnstwist_lookup"
+  ],
+  "category": "other",
+  "backend": "none directly; shells out to whois, nmap, dnsrecon, dnstwist, dig, host (which query the network)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "requires system binaries (nmap, dnsrecon, dnstwist, whois, dig) not in Python deps",
+  "dominant_cost": "mixed",
+  "notes": "Subprocess-based network recon (port scans) with very long timeouts; needs custom binaries/layer and raw network access, likely problematic on Lambda. osint_overview runs all lookups in parallel threads.",
+  "evidence": "mcp_servers/mcp-osint-server/mcp_osint_server/mcp_osint_server/main.py",
+  "n_tasks": 2
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Reddit",
+  "language": "python",
+  "n_tools": 2,
+  "example_tools": [
+   "fetch_reddit_hot_threads",
+   "fetch_reddit_post_content"
+  ],
+  "category": "api_wrapper",
+  "backend": "Reddit API (redditwarp, unauthenticated client)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Unauthenticated Reddit access is rate-limited; comment trees can be large.",
+  "evidence": "mcp_servers/mcp-reddit/src/mcp_reddit/reddit_fetcher.py, pyproject.toml",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "National Parks",
+  "language": "node",
+  "n_tools": 6,
+  "example_tools": [
+   "findParks",
+   "getParkDetails",
+   "getAlerts",
+   "getCampgrounds"
+  ],
+  "category": "api_wrapper",
+  "backend": "NPS API (developer.nps.gov)",
+  "needs_api_key": true,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Thin axios wrapper with formatters.",
+  "evidence": "mcp_servers/mcp-server-nationalparks/src/server.ts, src/utils/npsApiClient.ts",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Medical Calculator",
+  "language": "python",
+  "n_tools": 22,
+  "example_tools": [
+   "egfr_epi",
+   "bmi_bsa_calculator",
+   "chads2_vasc_score",
+   "framingham_risk_score"
+  ],
+  "category": "local_compute",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "scipy import at startup",
+  "dominant_cost": "cpu",
+  "notes": "Closed-form clinical formulas; 23 @mcp.tool decorators but bmi_bsa_calculator registered twice (22 distinct); scipy import dominates cold start.",
+  "evidence": "mcp_servers/medcalc/medcalc/__main__.py, pyproject.toml",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Metropolitan Museum",
+  "language": "node",
+  "n_tools": 3,
+  "example_tools": [
+   "list-departments",
+   "search-museum-objects",
+   "get-museum-object"
+  ],
+  "category": "api_wrapper",
+  "backend": "Met Museum Collection API (collectionapi.metmuseum.org)",
+  "needs_api_key": false,
+  "state": "session",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "get-museum-object by default downloads the object image and returns it base64 (large responses) and registers it as an in-memory server resource; client-side rate limiter.",
+  "evidence": "mcp_servers/metmuseum-mcp/src/tools/*.ts, src/utils/RateLimiter.ts, package.json",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Movie Recommender",
+  "language": "python",
+  "n_tools": 1,
+  "example_tools": [
+   "get_movies"
+  ],
+  "category": "api_wrapper",
+  "backend": "TMDB API (api.themoviedb.org)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "API key is hardcoded in source, so no env key needed; tool name inferred from server.py (verify).",
+  "evidence": "mcp_servers/movie-recommender-mcp/movie-reccomender-mcp/server.py, movie_recommender.py",
+  "n_tasks": 2
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "NASA Data",
+  "language": "python",
+  "n_tools": 21,
+  "example_tools": [
+   "get_astronomy_picture_of_day",
+   "get_asteroids_feed",
+   "get_mars_rover_photos",
+   "get_exoplanet_data"
+  ],
+  "category": "api_wrapper",
+  "backend": "NASA APIs (api.nasa.gov: APOD, NeoWs, DONKI, EPIC, Earth, Mars Rover), NASA Exoplanet Archive",
+  "needs_api_key": true,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Falls back to DEMO_KEY (heavily rate-limited) if NASA_API_KEY unset; some endpoints return binary images.",
+  "evidence": "mcp_servers/nasa-mcp/src/nasa_mcp/server.py, pyproject.toml",
+  "n_tasks": 6
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "OKX Exchange",
+  "language": "node",
+  "n_tools": 2,
+  "example_tools": [
+   "get_price",
+   "get_candlesticks"
+  ],
+  "category": "api_wrapper",
+  "backend": "OKX public market API (okx.com/api/v5)",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none",
+  "dominant_cost": "network_wait",
+  "notes": "Public endpoints, no auth.",
+  "evidence": "mcp_servers/okx-mcp/src/index.ts",
+  "n_tasks": 4
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Paper Search",
+  "language": "python",
+  "n_tools": 19,
+  "example_tools": [
+   "search_arxiv",
+   "download_arxiv",
+   "read_arxiv_paper",
+   "search_pubmed"
+  ],
+  "category": "search_fetch",
+  "backend": "arXiv, PubMed (NCBI E-utilities), bioRxiv, medRxiv, Google Scholar (scraping), IACR ePrint, Semantic Scholar",
+  "needs_api_key": false,
+  "state": "persistent",
+  "heavy_init": "moderate (PyPDF2, bs4/lxml, feedparser, httpx)",
+  "dominant_cost": "mixed",
+  "notes": "download_* write PDFs to ./downloads and read_* read them back and extract text with PyPDF2 (CPU + local disk; needs shared /tmp across calls); Google Scholar scraping easily blocked.",
+  "evidence": "mcp_servers/paper-search-mcp/paper_search_mcp/server.py, academic_platforms/*.py, pyproject.toml",
+  "n_tasks": 14
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Scientific Computing",
+  "language": "python",
+  "n_tools": 26,
+  "example_tools": [
+   "create_tensor",
+   "matrix_inverse",
+   "compute_eigen",
+   "plot_vector_field"
+  ],
+  "category": "local_compute",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "session",
+  "heavy_init": "numpy, sympy, matplotlib",
+  "dominant_cost": "cpu",
+  "notes": "Tensors stored in an in-memory tensor_store dict and referenced by name across calls, so needs instance affinity; plot tools render PNG images with matplotlib.",
+  "evidence": "mcp_servers/scientific_computation_mcp/src/server.py, src/linear_algebra.py, src/vector_calculus.py, src/visualization.py, pyproject.toml",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Weather Data",
+  "language": "python",
+  "n_tools": 4,
+  "example_tools": [
+   "get_current_weather_tool",
+   "get_weather_forecast_tool",
+   "search_locations_tool",
+   "get_live_temp"
+  ],
+  "category": "api_wrapper",
+  "backend": "WeatherAPI.com",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none at runtime (requirements.txt lists numpy/pandas/openmeteo but server.py imports only requests)",
+  "dominant_cost": "network_wait",
+  "notes": "API key is hardcoded in server.py (so no env key needed); uses blocking requests inside async tools.",
+  "evidence": "mcp_servers/weather_mcp/server.py, requirements.txt",
+  "n_tasks": 8
+ },
+ {
+  "benchmark": "MCP-Bench",
+  "server": "Time MCP",
+  "language": "python",
+  "n_tools": 2,
+  "example_tools": [
+   "get_current_time",
+   "convert_time"
+  ],
+  "category": "local_compute",
+  "backend": "none",
+  "needs_api_key": false,
+  "state": "stateless",
+  "heavy_init": "none (tzdata)",
+  "dominant_cost": "cpu",
+  "notes": "Local timezone math via zoneinfo; trivial.",
+  "evidence": "mcp_servers/time-mcp/src/mcp_server_time/server.py, pyproject.toml",
+  "n_tasks": 2
+ }
+]

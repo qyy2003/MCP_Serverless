@@ -1,0 +1,27 @@
+{
+  "_comment": "Replace the URLs with deployed function URLs (local: http://<container>:9000/mcp) and the mock upstream's URL. Classes are from data/server-census; classes without an endpoint use 'default'.",
+  "endpoints": {
+    "api_wrapper": {
+      "url": "https://<api-proxy function URL>/",
+      "tool": "search_products",
+      "arguments": {"upstream": "http://<mock upstream>:8080", "latency_ms": 200, "size": 16384}
+    },
+    "search_fetch": {
+      "url": "https://<fetch-markdown function URL>/",
+      "tool": "fetch",
+      "arguments": {"upstream": "http://<mock upstream>:8080", "latency_ms": 300, "size": 200000,
+                    "max_length": "{response_chars}"}
+    },
+    "local_compute": {
+      "url": "https://<dynamic-html function URL>/",
+      "tool": "render_html",
+      "arguments": {"username": "agent", "random_len": 1000}
+    },
+    "default": {
+      "url": "https://<sleep function URL>/",
+      "tool": "sleep",
+      "arguments": {"sleep": 0.05}
+    }
+  },
+  "llm": {"ttft_ms": 400, "prefill_tokens_per_s": 20000, "decode_tokens_per_s": 60, "chars_per_token": 4}
+}
