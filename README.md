@@ -1,11 +1,60 @@
 # MCP tools on serverless: a benchmark
 
-Measures what it costs to serve MCP (Model Context Protocol) tools from serverless
-functions: protocol overhead, cold starts, time spent waiting on upstream APIs, and how
-tool calls interleave with LLM calls in real agent sessions. Built as an extension of
-[SeBS](https://github.com/spcl/serverless-benchmarks).
+## What this project is about
 
-Why this project exists and how the scope was set: [docs/background.md](docs/background.md).
+**The setting.** An AI agent works in a loop: the LLM thinks, calls a *tool* (search the web,
+query GitHub, run a calculation), reads the result, and thinks again. The standard protocol
+for these tool calls is **MCP** (Model Context Protocol). A tool lives in an *MCP server*,
+and the agent talks to it over HTTP.
+
+```
+Agent (LLM)  ── tool call ──▶  MCP server on a serverless function  ──▶  GitHub API, web page, computation, ...
+     ▲                                      │
+     └────────────── result ────────────────┘
+        The agent waits here. We want to measure this wait and what it costs.
+```
+
+**The problem.** Cloud providers now recommend hosting MCP servers on *serverless* platforms
+(AWS Lambda, Cloudflare Workers, Azure Functions, Vercel), where code runs only when a request
+arrives and is billed per call. Nobody has measured how well that works:
+
+- Existing MCP benchmarks (MCP-Bench, MCP-Universe, LiveMCPBench) score how well the *LLM* uses
+  tools. They say nothing about latency or cost.
+- Existing serverless benchmarks, such as SeBS, do not speak MCP and do not model agent workloads.
+
+**The goal.** Build a benchmark that characterizes MCP tool performance on serverless platforms,
+and use it to answer four questions:
+
+| | Question | Where we are |
+|---|---|---|
+| Q1 | How does the time of a tool call split between startup, protocol round trips, network waits and compute? | Tools and client report every part of the split. Measured on localhost only. |
+| Q2 | How do tool calls interact with LLM calls: do they overlap? | Answered from a recorded agent run: almost never (2 of 810 turns). Needs more traces to confirm. |
+| Q3 | How large is the cold/warm difference, and how often do agent workloads trigger cold starts? | Trace analysis says it depends on session arrival rate. The platform measurement is not done. |
+| Q4 | Can the bill be predicted in advance, and do current billing models fit this workload? | Not started. The census shows why it matters: 57% of servers mostly wait on the network, which wall-clock billing charges for. |
+
+**The approach.** We extend [SeBS](https://github.com/spcl/serverless-benchmarks), the serverless
+benchmark suite from SPCL at ETH Zurich, which already deploys functions to AWS, Azure, GCP and
+local Docker and measures time, cold starts and cost. The plan has four steps:
+
+1. Teach SeBS to serve its functions as MCP tools, so the same function can be called through
+   MCP and directly, and the difference is the cost of MCP. **Done.**
+2. Find out what real MCP tools do, so the benchmark covers realistic workloads. **Done** (the census).
+3. Build one benchmark tool per common workload class. **Two of six done.**
+4. Run on real platforms: single-tool measurements, then replays of recorded agent sessions
+   with the LLM replaced by modeled waiting time. **Replay driver done; no platform runs yet.**
+
+**Scope.** Serverless deployment of *tools* only. Agent code sandboxes are out of scope; another
+SPCL project covers them. The original proposal and the reply that set this scope are in
+[docs/background.md](docs/background.md).
+
+**Terms used below**
+
+- **Cold start:** a request that arrives when no instance is running, so the platform boots one first. Slow.
+- **Warm:** a request served by an instance that is already running.
+- **MCP handshake:** the requests that open a session (`initialize`, `tools/list`) before the first `tools/call`.
+- **Upstream:** the remote service a tool calls, such as the GitHub API. We replace it with a mock whose delay and response size we set.
+- **Census class:** our category for what a tool does when called (API wrapper, search/fetch, local compute, browser, ...).
+- **Trace:** the recorded sequence of LLM turns and tool calls of real agent sessions, which we replay.
 
 ## Status
 
@@ -23,6 +72,70 @@ no AWS Lambda run and no SeBS local-Docker run. That is the next step.
 | Browser tool, DB tool, heavy-import tool | not started |
 | Node.js wrappers, Azure, GCP, MCP session mode / SSE on the server side | not started |
 | SeBS CLI integration (an MCP trigger type) | not started; the client takes a function URL instead |
+
+## Results so far
+
+Three kinds of result exist. None of them is a cloud measurement.
+
+### 1. Census of 108 MCP servers (data, final)
+
+From the server sets of MCP-Bench, MCP-Universe and LiveMCPBench; full write-up in
+[docs/server-census.md](docs/server-census.md).
+
+| Finding | Number |
+|---|---|
+| Servers that wrap a remote REST API | 53 of 108 (49%); 35–59% of task references per benchmark |
+| Servers whose time is mostly network wait | 62 of 108 (57%) |
+| Light local compute (calculator, time, conversion) | 24 servers; 18–29% of task references |
+| Search / fetch | 13 servers; 26–29% of task references in MCP-Bench and MCP-Universe |
+| Browser | 3 servers, but 13% of MCP-Universe task references |
+| Servers that keep state between calls | 30 (11 in memory, 19 persistent) |
+| Servers with notable startup cost | 37 |
+| Servers needing an API key / using a database | 8 / 0 |
+
+Consequence: the main workload is a function that waits on the network, which is where
+wall-clock billing matters. The benchmarks under-represent authenticated APIs and databases.
+
+### 2. Agent trace analysis (recorded run + modeled LLM time)
+
+From LiveMCPBench's recorded Claude Sonnet 4 run: 95 sessions, 905 LLM turns, 814 tool calls.
+The call sequence is real; the timing is modeled (see Caveats). Reproduce with `make dry-run`.
+
+| | p50 | p90 | max |
+|---|---|---|---|
+| LLM time per turn | 1.7 s | 9.2 s | 51 s |
+| LLM time per session | 23 s | 80 s | 181 s |
+| Gap between calls to the same tool class | 1.8 s | 9.1 s | 90 s |
+
+- Only 2 of 810 tool-calling turns issue more than one call, so tool calls and LLM generation
+  are almost strictly sequential: tool latency is on the agent's critical path.
+- Only 2 of 578 same-class gaps exceed a minute, so within a session instances stay warm.
+  Cold starts should depend on session arrival rate, not on behavior inside a session.
+
+### 3. Local harness measurements (localhost, sanity check only)
+
+The real AWS wrapper running behind `tests/fake_lambda.py`, client on the same machine.
+There is no network, no Lambda runtime and no real cold start here, so these show that the
+harness works and how small the protocol cost is in the best case. Re-measured on 2026-11-15.
+
+| Measurement | Result |
+|---|---|
+| `110.dynamic-html`, MCP `tools/call` vs. plain invocation (median of 200) | 2.07 ms vs. 1.85 ms: about 0.2 ms added per call |
+| MCP handshake (`initialize` + `notifications/initialized` + `tools/list`), once per session | about 4.8 ms, of which 1.1 ms is TCP connect |
+| `610.api-proxy`, upstream set to 200 ms / 16 KB (median of 30) | 201.5 ms per call; 0.7 ms outside the function |
+| `620.fetch-markdown`, upstream set to 300 ms / 200 KB (median of 30) | 319.8 ms per call; about 19 ms beyond the configured delay, mostly HTML → markdown (about 90 ms per MB) |
+
+To reproduce, start `python -m mcp_bench.mock_upstream --port 8080` and
+`python tests/fake_lambda.py serverless-benchmarks/benchmarks/<group>/<benchmark> <port>`,
+then point `python -m mcp_bench.client --url http://127.0.0.1:<port>/` at it.
+
+Two things found while measuring, worth watching for in cloud runs:
+
+- **Nagle's algorithm with delayed ACK added about 40 ms to every response** until `TCP_NODELAY`
+  was set in the client and the test servers. Real MCP clients and hosts can hit the same stall.
+- **Cold starts on the handshake were invisible** when only `tools/call` reported `is_cold`.
+  The wrapper now reports it on `initialize` and `tools/list` too. With eager initialization the
+  handshake takes the cold start and the first tool call looks warm.
 
 ## Quick start
 
