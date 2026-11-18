@@ -27,10 +27,10 @@ and use it to answer four questions:
 
 | | Question | Where we are |
 |---|---|---|
-| Q1 | How does the time of a tool call split between startup, protocol round trips, network waits and compute? | Tools and client report every part of the split. Measured on localhost only. |
+| Q1 | How does the time of a tool call split between startup, protocol round trips, network waits and compute? | Measured on AWS Lambda: MCP adds ±3 ms per call and 3 round trips per session; the platform adds 12–20 ms per call; API tools are their upstream's latency + ~18 ms. |
 | Q2 | How do tool calls interact with LLM calls: do they overlap? | Answered from a recorded agent run: almost never (2 of 810 turns). Needs more traces to confirm. |
-| Q3 | How large is the cold/warm difference, and how often do agent workloads trigger cold starts? | Trace analysis says it depends on session arrival rate. The platform measurement is not done. |
-| Q4 | Can the bill be predicted in advance, and do current billing models fit this workload? | Not started. The census shows why it matters: 57% of servers mostly wait on the network, which wall-clock billing charges for. |
+| Q3 | How large is the cold/warm difference, and how often do agent workloads trigger cold starts? | Measured on Lambda: 0.2–1.5 s at 128 MB, 0.2–0.5 s at 1769 MB, dominated by the tool's own import. Replayed sessions arriving ≤ 60 s apart see few cold starts; sparse arrivals are not measured yet. |
+| Q4 | Can the bill be predicted in advance, and do current billing models fit this workload? | First answer from Lambda: an API tool's bill is its upstream latency + 4–7 ms, so it is predictable; 95–100% of it pays for waiting, 7–91× what CPU-time billing would charge. |
 
 **The approach.** We extend [SeBS](https://github.com/spcl/serverless-benchmarks), the serverless
 benchmark suite from SPCL at ETH Zurich, which already deploys functions to AWS, Azure, GCP and
@@ -41,7 +41,7 @@ local Docker and measures time, cold starts and cost. The plan has four steps:
 2. Find out what real MCP tools do, so the benchmark covers realistic workloads. **Done** (the census).
 3. Build one benchmark tool per common workload class. **Two of six done.**
 4. Run on real platforms: single-tool measurements, then replays of recorded agent sessions
-   with the LLM replaced by modeled waiting time. **Replay driver done; no platform runs yet.**
+   with the LLM replaced by modeled waiting time. **First AWS Lambda campaign done** (2026-11-18).
 
 **Scope.** Serverless deployment of *tools* only. Agent code sandboxes are out of scope; another
 SPCL project covers them. The original proposal and the reply that set this scope are in
@@ -58,24 +58,25 @@ SPCL project covers them. The original proposal and the reply that set this scop
 
 ## Status
 
-Everything below runs locally and is tested. **Nothing has been run on a real platform yet**:
-no AWS Lambda run and no SeBS local-Docker run. That is the next step.
+Everything below runs locally and is tested. The first AWS Lambda campaign ran on 2026-11-18:
+four tools, three memory sizes, cold and warm, plus trace replay ([docs/aws-results.md](docs/aws-results.md)).
 
 | Piece | State |
 |---|---|
-| MCP wrapper for SeBS (any benchmark served as an MCP tool from the same function) | done for AWS Python and the local Python server; tested against a fake Function URL only |
+| MCP wrapper for SeBS (any benchmark served as an MCP tool from the same function) | done for AWS Python and the local Python server; runs on AWS Lambda; reports CPU time and import time |
 | Timing client (MCP session vs. plain invocation) | done |
 | Census of the servers in MCP-Bench, MCP-Universe, LiveMCPBench (108 servers, 822 tools) | done |
 | Two tool benchmarks: `610.api-proxy`, `620.fetch-markdown`, plus a mock upstream | done |
-| Agent trace (LiveMCPBench, Claude Sonnet 4 run) and replay driver | done; only replayed against the fake Lambda and in `--dry-run` |
-| Runs on AWS Lambda / SeBS local Docker | **not started** (needs AWS credentials; local needs the run image rebuilt) |
+| Agent trace (LiveMCPBench, Claude Sonnet 4 run) and replay driver | done; replayed on Lambda at three arrival rates |
+| Runs on AWS Lambda | **first campaign done** (eu-north-1; `experiments/aws_campaign.py`, `analysis/aws_results.py`) |
+| Runs on SeBS local Docker | not started (needs the run image rebuilt) |
 | Browser tool, DB tool, heavy-import tool | not started |
 | Node.js wrappers, Azure, GCP, MCP session mode / SSE on the server side | not started |
 | SeBS CLI integration (an MCP trigger type) | not started; the client takes a function URL instead |
 
 ## Results so far
 
-Three kinds of result exist. None of them is a cloud measurement.
+Four kinds of result exist. Section 4 is the first cloud measurement.
 
 ### 1. Census of 108 MCP servers (data, final)
 
@@ -136,6 +137,27 @@ Two things found while measuring, worth watching for in cloud runs:
 - **Cold starts on the handshake were invisible** when only `tools/call` reported `is_cold`.
   The wrapper now reports it on `initialize` and `tools/list` too. With eager initialization the
   handshake takes the cold start and the first tool call looks warm.
+  *On Lambda this holds only for Lambda's own init: the tool's import still lands on the first
+  `tools/call`, because SeBS imports the benchmark lazily (see section 4).*
+
+### 4. AWS Lambda campaign (2026-11-18, first cloud measurement)
+
+Four tools (no-op, `110.dynamic-html`, `610.api-proxy`, `620.fetch-markdown`) on Lambda in eu-north-1
+at 128, 512 and 1769 MB; client and mock upstream on an EC2 VM in the same region; billing from
+Lambda's REPORT lines. Full write-up with figures: [docs/aws-results.md](docs/aws-results.md).
+
+| Finding | Number |
+|---|---|
+| MCP vs plain invocation, warm | within ±3 ms per call; the platform path costs 12–20 ms either way |
+| MCP session setup (connect + `initialize` + notification + `tools/list`) | 48–52 ms in-region, 182 ms from ETH Zurich |
+| Cold start, time to first result | 0.2–1.5 s at 128 MB, 0.2–0.53 s at 1769 MB |
+| ... of which Lambda's init / the tool's import | 67–79 ms at every size / up to 1.1 s at 128 MB, 33–69 ms at 1769 MB |
+| API-wrapper call and bill | call = upstream delay + 17–20 ms; billed = upstream delay + 4–7 ms (p99 ≤ +12 ms) |
+| Share of the API tool's billed time spent waiting | 95–100%; CPU < 1 ms per call |
+| Lambda vs CPU-time billing, API tool at 1 s upstream | $2.30 (128 MB) to $29.14 (1769 MB) vs $0.32 per million calls |
+| Init phase billed | yes, on all 319 cold invocations |
+| Replay, 20 sessions arriving 1–60 s apart | 4 first-use cold starts + 1–5 more from overlap; tools busy ~3% of session time |
+| Handshake share of replay invocations / Lambda bill | 30% / 8.8% |
 
 ## Quick start
 
@@ -158,23 +180,30 @@ docs/
   mcp-wrapper.md                  milestone 1: the wrapper, the SeBS patch workflow, the client
   server-census.md                what the MCP benchmarks exercise; which tool classes to build
   tools-and-replay.md             milestone 2: tool benchmarks, mock upstream, trace replay, first observations
+  aws-results.md                  milestone 3: the first AWS Lambda campaign, findings and figures
+  aws-tables-2026-11-18.md        every table of that campaign, generated by analysis/aws_results.py
+  figures/aws/                    its figures
 mcp_bench/                        our Python package (stdlib only)
   client.py                       MCP client and timing driver; `--mode plain` is the non-MCP baseline
   mock_upstream.py                mock REST API and web pages with settable delay and size
   traces.py                       converts recorded agent runs to replay traces
   replay.py                       replays traces against deployed tools
 configs/replay.example.json       maps census classes to deployed tools; LLM timing model
+configs/sebs-aws.json             SeBS deployment config for AWS (eu-north-1, Function URLs; no keys)
+configs/replay.aws.json           the deployed function URLs (git-ignored: they are public endpoints)
+experiments/aws_campaign.py       runs experiments E1-E4 on Lambda and fetches billing data (needs boto3)
 data/
   server-census/                  one record per server, per benchmark; summary.md is generated
   traces/                         replay trace: 95 sessions, 814 tool calls
 analysis/server_census.py         regenerates data/server-census/summary.md
+analysis/aws_results.py           tables and figures of an AWS campaign (needs pandas, matplotlib)
 serverless-benchmarks/            SeBS submodule, pinned to upstream commit 089e5c6c
 patches/serverless-benchmarks.patch   all our changes to SeBS (15 files)
 scripts/sebs-patch.sh             apply / export / revert / status of that patch
 tests/                            end-to-end tests; fake_lambda.py runs the real AWS wrapper locally
 ```
 
-Read the docs in this order: `mcp-wrapper.md`, `server-census.md`, `tools-and-replay.md`.
+Read the docs in this order: `mcp-wrapper.md`, `server-census.md`, `tools-and-replay.md`, `aws-results.md`.
 
 ## The one thing to know: SeBS changes live in a patch
 
@@ -198,45 +227,34 @@ Inside SeBS, our additions are:
 - `mcp.json` in `010.sleep` and `110.dynamic-html`: tool definitions for existing benchmarks
 - small edits to the AWS handler, the local server, `configs/systems.json`, `sebs/benchmark.py`
 
-## Next step: the first real run on AWS
+## Running on AWS
 
-These steps are **untested**; they follow the SeBS documentation and how the patch is built.
+This is the setup the 2026-11-18 campaign used.
 
-1. Install SeBS (`serverless-benchmarks/README.md`, `docs/usage.md`) and configure AWS credentials.
-2. Start the mock upstream on a small VM in the same region as the functions, reachable from them:
-   `python -m mcp_bench.mock_upstream --port 8080`, then `export SEBS_MOCK_UPSTREAM=http://<host>:8080`.
-3. Deploy with SeBS, with Function URLs enabled (`use-function-url` in `configs/example.json`):
-   `sebs benchmark invoke 610.api-proxy test --config <config> --deployment aws`.
-   Same for `620.fetch-markdown`, `110.dynamic-html`, `010.sleep`.
-4. Measure MCP against plain invocation on the same URL:
-   ```bash
-   python -m mcp_bench.client --url <function-url> --arguments '{"sleep": 0.1}' --calls 20 --output results/mcp.jsonl
-   python -m mcp_bench.client --url <function-url> --arguments '{"sleep": 0.1}' --calls 20 --mode plain
-   ```
-5. Copy `configs/replay.example.json`, fill in the four function URLs and the upstream URL, and replay:
-   ```bash
-   python -m mcp_bench.replay data/traces/livemcpbench-claude-sonnet-4.jsonl \
-       --config my-replay.json --sessions 20 --concurrency 4 --output results/replay.jsonl
-   ```
+1. **SeBS:** `cd serverless-benchmarks && python3 -m venv python-venv && uv pip install --python python-venv/bin/python -e . matplotlib`
+   (an editable install, so `sebs` runs our patched tree). Run `sebs` from inside `serverless-benchmarks/`.
+2. **Credentials:** `export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...`. SeBS accepts only an access key and secret
+   (no session tokens). The current account's organization policy allows only **eu-north-1**.
+3. **Mock upstream:** an EC2 VM in the same region with port 8080 open, running `python3 -m mcp_bench.mock_upstream --port 8080`
+   (as a systemd service), and holding a copy of `mcp_bench/`, `configs/` and `data/traces/`. Then `export SEBS_MOCK_UPSTREAM=http://<vm>:8080`.
+4. **Deploy:** `sebs benchmark invoke <benchmark> test --config ../configs/sebs-aws.json --deployment aws --trigger http`
+   for `010.sleep`, `110.dynamic-html`, `610.api-proxy`, `620.fetch-markdown`. Add `--update-code` after changing the wrapper.
+5. **Measure:** `experiments/aws_campaign.py` (see its docstring and the end of `docs/aws-results.md`). It changes memory and
+   forces cold starts from the workstation, runs the client on the VM over SSH, and fetches REPORT lines from CloudWatch.
 
-`results/` is git-ignored.
-
-Things to check on the first run, because the local tests cannot show them:
-
-- Does a tool call after `initialize` reach the same Lambda instance? The observation that the
-  handshake absorbs the cold start depends on it.
-- Is `is_cold` reported correctly on Lambda? It relies on a marker file in `/tmp`.
-- For the local Docker platform, the run image must be rebuilt (`sebs docker build`) to get the `/mcp` route.
+`results/` is git-ignored. Resources the campaign leaves in the account: the four functions and their public URLs,
+the S3 bucket `sebs-benchmarks-<id>`, the IAM role `sebs-lambda-role`, the VM, its Elastic IP, security group and key pair.
 
 ## After that
 
 In rough priority order; details in the "Next" sections of the docs.
 
-1. AWS experiments: MCP vs. plain, cold vs. warm, the time split per tool, replay at several arrival rates.
-2. Browser tool (Playwright/Chromium as a container image) and a DB tool with connection setup.
-3. More traces (MCP-Universe, MCP-Bench), and real timestamps from an instrumented agent run.
+1. Idle-time experiment (call, wait 1–30 min, call): cold starts of sparse agent traffic, which the replay does not reach.
+2. Eager-import wrapper variant: import the tool at startup, as real MCP servers do, and re-measure cold starts and billing.
+3. Browser tool (Playwright/Chromium as a container image) and a DB tool with connection setup.
+4. More traces (MCP-Universe, MCP-Bench), and real timestamps from an instrumented agent run.
    The current LLM times are modeled from token counts, not measured.
-4. Other platforms and languages.
+5. Other platforms (a CPU-time-billed one to test the billing finding) and languages.
 
 ## Caveats on the existing numbers
 
@@ -244,3 +262,5 @@ In rough priority order; details in the "Next" sections of the docs.
   **modeled** timeline: 400 ms TTFT, 20 000 tok/s prefill, 60 tok/s decode. These are assumptions.
 - The census classification is from source code for MCP-Bench, and from configs and tool schemas
   for most of LiveMCPBench. Confidence per benchmark is listed in `docs/server-census.md`.
+- The AWS numbers come from one region, one day and one client VM, with 10 cold sessions and 30 warm
+  calls per cell; the mock upstream is plain HTTP. Full list in `docs/aws-results.md`.

@@ -35,7 +35,7 @@ up as a change in this repository; only the patch file does.
 | File | Change |
 |---|---|
 | `benchmarks/wrappers/mcp/python/mcp_shim.py` | New. Stateless MCP Streamable HTTP server (JSON responses, no SSE, no session): `initialize`, `ping`, `tools/list`, `tools/call`. Standard library only, so package size and import time are unchanged. SeBS timings go back in the tool result's `_meta.sebs`. |
-| `benchmarks/wrappers/aws/python/handler.py` | A JSON-RPC body is routed to the shim, anything else follows the existing path. Cold-start detection moved into `cold_test()`. In the MCP path every request (including `initialize`) counts towards warming the container. |
+| `benchmarks/wrappers/aws/python/handler.py` | A JSON-RPC body is routed to the shim, anything else follows the existing path. Cold-start detection moved into `cold_test()`. In the MCP path every request (including `initialize`) counts towards warming the container. Both paths report `cpu_us` (process CPU time of the call) and `import_us` (time to import the benchmark module, which happens on an instance's first call). |
 | `dockerfiles/local/python/server.py` | New `POST /mcp` route next to `POST /`. **The local run image must be rebuilt** to pick this up (`sebs docker build`). |
 | `configs/systems.json` | Ships the shim with local and AWS Python packages (`../../mcp/python/mcp_shim.py`). |
 | `sebs/benchmark.py` | Copies the benchmark's `mcp.json` into the package, and hashes it and the shim so edits invalidate the SeBS build cache. |
@@ -53,8 +53,10 @@ python -m mcp_bench.client --url <function-url> --mode plain --arguments '{"slee
 On AWS both modes use the same Function URL. On local, MCP uses `http://<container>:9000/mcp` and plain uses `/`.
 `--fresh-connection` opens a new TCP/TLS connection per request, like a client that does not keep connections alive.
 
-Per request the driver records `connect_us`, `ttfb_us`, `client_us` and, for tool calls, the
-function-side `exec_us`, `is_cold` and `container_id`.
+Per request the driver records `connect_us`, `ttfb_us`, `client_us`, a timestamp, the Lambda request ID
+(`amzn_request_id`, for matching billing records) and, for tool calls, the function-side `exec_us`, `cpu_us`,
+`import_us`, `is_cold`, `container_id` and the tool's own measurements (`m_*`). `--interval` spaces the calls;
+`--meta` adds labels to every record.
 
 ## Tests
 

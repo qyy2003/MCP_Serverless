@@ -44,7 +44,7 @@ class Connection:
         self._connected = False
 
     def post(self, body: bytes, headers: dict):
-        timing = {"connect_us": 0}
+        timing = {"connect_us": 0, "ts": round(time.time(), 6)}
         begin = time.perf_counter()
         if not self._connected:
             self._conn.connect()
@@ -62,6 +62,11 @@ class Connection:
             self.close()
         timing["ttfb_us"] = _us(first_byte - sent)
         timing["client_us"] = _us(end - begin)
+        # Lambda Function URLs name the invocation in a header, also for bodiless 202 responses,
+        # so every request can be matched with its billed duration in the platform logs.
+        amzn_id = response.getheader("x-amzn-RequestId")
+        if amzn_id:
+            timing["amzn_request_id"] = amzn_id
         return response.status, dict(response.getheaders()), data, timing
 
     def close(self):
@@ -85,11 +90,22 @@ def _server_times(meta: dict) -> dict:
     if not meta:
         return {}
     times = {"is_cold": meta.get("is_cold"), "container_id": meta.get("container_id")}
+    for key in ("request_id", "cpu_us", "import_us"):
+        if key in meta:
+            times[key] = meta[key]
     if "begin" in meta and "end" in meta:
         begin = datetime.fromtimestamp(float(meta["begin"]))
         end = datetime.fromtimestamp(float(meta["end"]))
         times["exec_us"] = _us((end - begin).total_seconds())
     return times
+
+
+def _tool_measurement(output) -> dict:
+    """The benchmark's own measurements (upstream wait, processing, ...), prefixed with m_."""
+    measurement = output.get("measurement") if isinstance(output, dict) else None
+    if not isinstance(measurement, dict):
+        return {}
+    return {f"m_{k}": v for k, v in measurement.items() if isinstance(v, (int, float, bool))}
 
 
 class MCPClient:
@@ -158,31 +174,38 @@ class MCPClient:
         if result.get("isError"):
             raise RuntimeError(f"Tool {name} failed: {result['content']}")
         record.update(_server_times(result.get("_meta", {}).get("sebs", {})))
+        record.update(_tool_measurement(result.get("structuredContent")))
         return result, record
 
 
-def run_mcp(url: str, arguments: dict, calls: int, fresh_connection: bool, tool: Optional[str]):
+def run_mcp(url: str, arguments: dict, calls: int, fresh_connection: bool, tool: Optional[str],
+            interval: float = 0.0):
     client = MCPClient(url, fresh_connection)
     try:
         _, records = client.initialize()
         tools, record = client.list_tools()
         records.append(record)
         name = tool or tools[0]["name"]
-        for _ in range(calls):
+        for i in range(calls):
+            if i and interval:
+                time.sleep(interval)
             _, record = client.call_tool(name, arguments)
+            record["call"] = i
             records.append(record)
     finally:
         client.close()
     return records
 
 
-def run_plain(url: str, arguments: dict, calls: int, fresh_connection: bool):
+def run_plain(url: str, arguments: dict, calls: int, fresh_connection: bool, interval: float = 0.0):
     """Invoke the function the way SeBS's HTTP trigger does, for a protocol-free baseline."""
     conn = Connection(url)
     records = []
     body = json.dumps(arguments).encode()
     try:
-        for _ in range(calls):
+        for i in range(calls):
+            if i and interval:
+                time.sleep(interval)
             if fresh_connection:
                 conn.close()
             status, _, data, timing = conn.post(body, {"Content-Type": "application/json"})
@@ -192,9 +215,10 @@ def run_plain(url: str, arguments: dict, calls: int, fresh_connection: bool):
             if "body" in output:
                 body_out = output["body"]
                 output = body_out if isinstance(body_out, dict) else json.loads(body_out)
-            record = {"phase": "plain", "request_bytes": len(body), "response_bytes": len(data)}
+            record = {"phase": "plain", "call": i, "request_bytes": len(body), "response_bytes": len(data)}
             record.update(timing)
             record.update(_server_times(output))
+            record.update(_tool_measurement(output.get("result")))
             records.append(record)
     finally:
         conn.close()
@@ -229,14 +253,21 @@ def main(argv=None):
     parser.add_argument("--calls", type=int, default=10, help="Tool calls per session")
     parser.add_argument("--fresh-connection", action="store_true",
                         help="Open a new TCP/TLS connection for every request")
+    parser.add_argument("--interval", type=float, default=0.0,
+                        help="Seconds to wait between tool calls (default: back to back)")
+    parser.add_argument("--meta", default="{}",
+                        help="JSON object merged into every output record (experiment labels)")
     parser.add_argument("--output", help="Write per-request records as JSON lines")
     args = parser.parse_args(argv)
 
     arguments = json.loads(args.arguments)
     if args.mode == "mcp":
-        records = run_mcp(args.url, arguments, args.calls, args.fresh_connection, args.tool)
+        records = run_mcp(args.url, arguments, args.calls, args.fresh_connection, args.tool, args.interval)
     else:
-        records = run_plain(args.url, arguments, args.calls, args.fresh_connection)
+        records = run_plain(args.url, arguments, args.calls, args.fresh_connection, args.interval)
+    labels = json.loads(args.meta)
+    for r in records:
+        r.update(labels)
 
     if args.output:
         with open(args.output, "w") as f:
