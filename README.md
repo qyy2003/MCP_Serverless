@@ -197,7 +197,7 @@ data/
   traces/                         replay trace: 95 sessions, 814 tool calls
 analysis/server_census.py         regenerates data/server-census/summary.md
 analysis/aws_results.py           tables and figures of an AWS campaign (needs pandas, matplotlib)
-serverless-benchmarks/            SeBS submodule, pinned to upstream commit 089e5c6c
+serverless-benchmarks/            SeBS submodule from the fork anveba/serverless-benchmarks, pinned to 089e5c6c
 patches/serverless-benchmarks.patch   all our changes to SeBS (15 files)
 scripts/sebs-patch.sh             apply / export / revert / status of that patch
 tests/                            end-to-end tests; fake_lambda.py runs the real AWS wrapper locally
@@ -207,8 +207,10 @@ Read the docs in this order: `mcp-wrapper.md`, `server-census.md`, `tools-and-re
 
 ## The one thing to know: SeBS changes live in a patch
 
-We never commit inside `serverless-benchmarks/`. The submodule stays on the upstream commit
-and our changes to it are stored in `patches/serverless-benchmarks.patch`.
+We never commit inside `serverless-benchmarks/`. The submodule comes from the fork
+[anveba/serverless-benchmarks](https://github.com/anveba/serverless-benchmarks) and stays on its pinned commit
+(`089e5c6c`, the fork's `master`, identical to SPCL's upstream at that commit);
+our changes to it are stored in `patches/serverless-benchmarks.patch`.
 
 ```bash
 scripts/sebs-patch.sh apply      # after cloning (make setup does this)

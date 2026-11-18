@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Manage our changes to the serverless-benchmarks (SeBS) submodule as a patch.
 #
-# The submodule stays pinned to an upstream commit; everything we change in it
+# The submodule stays pinned to a commit of the SeBS fork; everything we change in it
 # lives in patches/serverless-benchmarks.patch in this repository.
 #
 #   scripts/sebs-patch.sh apply    apply the patch to the submodule's working tree

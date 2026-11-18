@@ -9,7 +9,7 @@ that SeBS already invokes, so we can measure what MCP adds on serverless
 The files of this milestone; the README has the full repository map.
 
 ```
-serverless-benchmarks/            SeBS submodule, pinned to upstream (never committed to)
+serverless-benchmarks/            SeBS submodule (fork anveba/serverless-benchmarks), pinned commit (never committed to)
 patches/serverless-benchmarks.patch   all our changes to SeBS
 scripts/sebs-patch.sh             apply / export / revert / status of the patch
 mcp_bench/client.py               MCP client + timing driver (stdlib only)
