@@ -77,6 +77,9 @@ TRACE = "data/traces/livemcpbench-claude-sonnet-4.jsonl"
 CODES = ["010", "110", "610", "620"]
 SDK_CODES = ["610s", "620s"]
 SDK_MIN_MEMORY_MB = 256
+# --e2-serial: where functions wait between their measurements (the SDK variants need >128 MiB)
+PARK = {"memory_mb": 128, "cpu": "0.083", "label": "park"}
+PARK_SDK = {"memory_mb": 512, "cpu": "0.333", "label": "park"}
 RUN = "https://run.googleapis.com/v2"
 LOGGING = "https://logging.googleapis.com/v2"
 
@@ -161,47 +164,67 @@ class Campaign:
         return f"projects/{self.project}/locations/{REGION}/services/{self.fns[code]['service']}"
 
     def _request(self, method, url, **kw):
+        last = None
         for attempt in range(30):
             r = self.http.request(method, url, **kw)
             if r.status_code in (409, 429, 500, 503):
+                last = f"{r.status_code} {r.text[:300]}"
                 time.sleep(min(2 + attempt, 10))
                 continue
             if not r.ok:
                 raise RuntimeError(f"{method} {url}: {r.status_code} {r.text[:500]}")
             return r.json()
-        raise RuntimeError(f"{method} {url}: gave up after retries")
+        raise RuntimeError(f"{method} {url}: gave up after retries, last: {last}")
+
+    def _deploy(self, code, tier, boost, tag):
+        """PATCH the service from its current definition (a fresh GET each time, so the etag is current)."""
+        svc = self._request("GET", f"{RUN}/{self._service(code)}")
+        container = svc["template"]["containers"][0]
+        resources = container.setdefault("resources", {})
+        if tier:
+            resources["limits"] = {"memory": f"{tier['memory_mb']}Mi", "cpu": tier["cpu"]}
+        if boost is not None:
+            resources["startupCpuBoost"] = boost
+        if tag:
+            env = [e for e in container.get("env", []) if e["name"] != "cold_start"]
+            container["env"] = env + [{"name": "cold_start", "value": tag}]
+        svc["template"].pop("revision", None)
+        return self._request("PATCH", f"{RUN}/{self._service(code)}", json=svc)
 
     def configure(self, codes, tier=None, boost=None, force_cold=True):
-        """New revision per service: tier and/or boost and/or a fresh env var; new requests go to new instances."""
-        pending = []
-        for code in codes:
-            svc = self._request("GET", f"{RUN}/{self._service(code)}")
-            container = svc["template"]["containers"][0]
-            resources = container.setdefault("resources", {})
-            if tier:
-                resources["limits"] = {"memory": f"{tier['memory_mb']}Mi", "cpu": tier["cpu"]}
-            if boost is not None:
-                resources["startupCpuBoost"] = boost
-            tag = uuid.uuid4().hex[:8]
-            if force_cold:
-                env = [e for e in container.get("env", []) if e["name"] != "cold_start"]
-                container["env"] = env + [{"name": "cold_start", "value": tag}]
-            svc["template"].pop("revision", None)
-            op = self._request("PATCH", f"{RUN}/{self._service(code)}", json=svc)
-            pending.append((code, op, tag))
-        for code, op, tag in pending:
-            while not op.get("done"):
-                time.sleep(1)
-                op = self._request("GET", f"{RUN}/{op['name']}")
-            if "error" in op:
-                raise RuntimeError(f"configure {code}: {op['error']}")
-            svc = self._request("GET", f"{RUN}/{self._service(code)}")
-            res = svc["template"]["containers"][0]["resources"]
-            cfg = {"memory_mb": memory_mb(res["limits"]["memory"]), "cpu": res["limits"]["cpu"],
-                   "boost": bool(res.get("startupCpuBoost"))}
-            self.current[code] = cfg
-            self.configs_log.write(json.dumps(dict(cfg, ts=round(time.time(), 3), fn=code, cold_tag=tag,
-                                                   revision=svc.get("latestReadyRevision", "").split("/")[-1])) + "\n")
+        """New revision per service: tier and/or boost and/or a fresh env var; new requests go to new instances.
+
+        With --e2-serial, one service at a time (each revision pre-starts an instance, and at 1 vCPU six at once
+        can exceed the project's CPU quota)."""
+        groups = [[c] for c in codes] if self.args.e2_serial else [codes]
+        for group in groups:
+            pending = []
+            for code in group:
+                tag = uuid.uuid4().hex[:8] if force_cold else None
+                pending.append((code, self._deploy(code, tier, boost, tag), tag))
+            for code, op, tag in pending:
+                for attempt in range(20):
+                    while not op.get("done"):
+                        time.sleep(1)
+                        op = self._request("GET", f"{RUN}/{op['name']}")
+                    if "error" not in op:
+                        break
+                    # The project's Cloud Run CPU quota (cpu_allocation, 20 vCPU in europe-west1) counts every
+                    # live instance, idle ones of older revisions included: wait for them to wind down, redeploy.
+                    if "Quota exceeded" not in str(op["error"].get("message", "")):
+                        raise RuntimeError(f"configure {code}: {op['error']}")
+                    self.say(f"  configure {code}: CPU quota exceeded, retrying in 60 s")
+                    time.sleep(60)
+                    op = self._deploy(code, tier, boost, tag)
+                else:
+                    raise RuntimeError(f"configure {code}: CPU quota still exceeded after 20 attempts")
+                svc = self._request("GET", f"{RUN}/{self._service(code)}")
+                res = svc["template"]["containers"][0]["resources"]
+                cfg = {"memory_mb": memory_mb(res["limits"]["memory"]), "cpu": res["limits"]["cpu"],
+                       "boost": bool(res.get("startupCpuBoost"))}
+                self.current[code] = cfg
+                self.configs_log.write(json.dumps(dict(cfg, ts=round(time.time(), 3), fn=code, cold_tag=tag,
+                                                       revision=svc.get("latestReadyRevision", "").split("/")[-1])) + "\n")
         self.configs_log.flush()
 
     def hold(self, codes, seconds):
@@ -234,13 +257,34 @@ class Campaign:
 
     # --- running the client --------------------------------------------------------------------
 
-    def client(self, code, path, meta, mode="mcp", calls=10, interval=0.0, args=None, local=False):
+    def load_done(self):
+        """--resume: the session outputs that already exist (complete ones only: clients write <out>.part and
+        rename it on success), relative to the campaign directory, on the VM and (WAN runs) locally."""
+        self.done = set()
+        if not self.args.resume:
+            return
+        proc = subprocess.run(self.ssh + [f"cd {self.args.vm_dir}/{self.remote_dir} 2>/dev/null && "
+                                          "find . -name '*.jsonl' -not -path './aborted/*'"],
+                              capture_output=True, text=True, check=True)
+        self.done = {line[2:] for line in proc.stdout.split()}
+        for root, _, files in os.walk(self.local_dir):
+            for f in files:
+                if f.endswith(".jsonl"):
+                    self.done.add(os.path.relpath(os.path.join(root, f), self.local_dir))
+        self.say(f"resume: {len(self.done)} outputs exist and are skipped")
+
+    def is_done(self, path) -> bool:
+        return path in self.done
+
+    def client(self, code, path, meta, mode="mcp", calls=10, interval=0.0, args=None, local=False, redo=False):
+        if self.is_done(path) and not redo:
+            return True
         spec = self.tools[code]
         out = f"{self.remote_dir}/{path}"
         meta = dict(meta, fn=code, mode=mode, client="workstation" if local else "vm", **self.current.get(code, {}))
         cmd = ["python3", "-m", "mcp_bench.client", "--url", self.fns[code]["url"], "--mode", mode,
                "--calls", str(calls), "--arguments", json.dumps(args or spec["args"]),
-               "--meta", json.dumps(meta), "--output", out, "--trace-header"]
+               "--meta", json.dumps(meta), "--output", out + ".part", "--trace-header"]
         if mode == "mcp":
             cmd += ["--tool", spec["tool"]]
         if interval:
@@ -248,8 +292,11 @@ class Campaign:
         if local:
             os.makedirs(os.path.dirname(os.path.join(ROOT, out)), exist_ok=True)
             proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=1800)
+            if proc.returncode == 0:
+                os.replace(os.path.join(ROOT, out + ".part"), os.path.join(ROOT, out))
         else:
-            remote = f"cd {self.args.vm_dir} && mkdir -p {shlex.quote(os.path.dirname(out))} && {shlex.join(cmd)}"
+            remote = (f"cd {self.args.vm_dir} && mkdir -p {shlex.quote(os.path.dirname(out))} && {shlex.join(cmd)} "
+                      f"&& mv {shlex.quote(out + '.part')} {shlex.quote(out)}")
             proc = subprocess.run(self.ssh + [remote], capture_output=True, text=True, timeout=1800)
         if proc.returncode:
             self.say(f"  FAILED {code} {mode} {meta}: {(proc.stderr or proc.stdout)[-400:]!r}")
@@ -261,28 +308,53 @@ class Campaign:
 
     # --- experiments ---------------------------------------------------------------------------
 
+    def park(self, codes, boost=None):
+        """Serial mode: move functions to a small tier between their measurements. Cloud Run keeps idle instances
+        of a service's current revision ~15 min, older revisions' ones only 1-3 min; parked, a function's
+        1 vCPU instances go away and don't count against the CPU quota while the others are measured."""
+        for code in codes:
+            self.configure([code], tier=PARK_SDK if code in SDK_CODES else PARK, boost=boost, force_cold=False)
+
     def e2(self, tier, boosts, reps=20):
         codes = self.codes_for(CODES + SDK_CODES, tier)
+        serial = self.args.e2_serial
         for boost in boosts:
             tag = "boost" if boost else "noboost"
-            self.configure(codes, boost=boost, force_cold=False)
+            if serial:
+                self.park(codes, boost=boost)
+            else:
+                self.configure(codes, boost=boost, force_cold=False)
             for rep in range(reps):
                 mode = "mcp" if rep % 2 == 0 else "plain"
-                self.configure(codes, force_cold=True)
-                self.hold(codes, self.args.hold)
-                for code in codes:
-                    self.client(code, f"e2/{tier['label']}/{tag}/{code}-{mode}-r{rep:02d}.jsonl",
-                                {"exp": "e2", "tier": tier["label"], "rep": rep}, mode=mode, calls=5)
+                # Serial: one function at a time (configure at the tier, hold, session, park), so only one
+                # function has 1 vCPU instances; needed where all of them together exceed the CPU quota.
+                path = lambda code: f"e2/{tier['label']}/{tag}/{code}-{mode}-r{rep:02d}.jsonl"
+                for group in ([[c] for c in codes] if serial else [codes]):
+                    group = [c for c in group if not self.is_done(path(c))]
+                    if not group:
+                        continue
+                    self.configure(group, tier=tier if serial else None, force_cold=True)
+                    self.hold(group, self.args.hold)
+                    for code in group:
+                        self.client(code, path(code),
+                                    {"exp": "e2", "tier": tier["label"], "rep": rep, "serial": serial},
+                                    mode=mode, calls=5)
+                    if serial:
+                        self.park(group)
                 self.say(f"  e2 {tier['label']} {tag} rep {rep + 1}/{reps} ({mode}) done")
-        self.configure(codes, boost=self.args.default_boost, force_cold=False)
+        self.configure(codes, tier=tier if serial else None, boost=self.args.default_boost, force_cold=False)
 
     def e1b(self, tier, reps=2, intervals=(0.0, 0.25, 1.0)):
         for rep in range(reps):
             for interval in intervals:
-                self.configure(["010", "110"], force_cold=True)
-                self.hold(["010", "110"], self.args.hold)
-                for code in ("010", "110"):
-                    self.client(code, f"e1b/{tier['label']}/{code}-i{interval}-r{rep}.jsonl",
+                path = lambda code: f"e1b/{tier['label']}/{code}-i{interval}-r{rep}.jsonl"
+                todo = [c for c in ("010", "110") if not self.is_done(path(c))]
+                if not todo:
+                    continue
+                self.configure(todo, force_cold=True)
+                self.hold(todo, self.args.hold)
+                for code in todo:
+                    self.client(code, path(code),
                                 {"exp": "e1b", "tier": tier["label"], "rep": rep, "interval": interval},
                                 calls=40, interval=interval)
             self.say(f"  e1b {tier['label']} rep {rep + 1}/{reps} done")
@@ -290,7 +362,7 @@ class Campaign:
     def e1(self, tier, wan=False):
         t = tier["label"]
         for code in ("010", "110"):
-            self.client(code, f"e1/{t}/{code}-warmup.jsonl", {"exp": "warmup", "tier": t}, calls=3)
+            self.client(code, f"e1/{t}/{code}-warmup.jsonl", {"exp": "warmup", "tier": t}, calls=3, redo=True)
             for chunk in range(4):
                 modes = ("mcp", "plain") if chunk % 2 == 0 else ("plain", "mcp")
                 for mode in modes:
@@ -341,12 +413,14 @@ class Campaign:
                         f"{self.args.vm}:{self.args.vm_dir}/configs/replay.gcp.json"], check=True)
         self.configure(CODES, tier=tier, force_cold=True)
         for interval in intervals:
+            if self.is_done(f"e4/{tier['label']}/replay-a{interval}.jsonl"):
+                continue
             self.configure(CODES, force_cold=True)
             out = f"{self.remote_dir}/e4/{tier['label']}/replay-a{interval}"
             remote = (f"cd {self.args.vm_dir} && mkdir -p {shlex.quote(os.path.dirname(out))} && "
                       f"MCP_BENCH_TRACE_HEADER=1 python3 -m mcp_bench.replay {TRACE} --config configs/replay.gcp.json "
                       f"--sessions {sessions} --concurrency {sessions} --arrival-interval {interval} "
-                      f"--output {out}.jsonl > {out}.summary.json 2> {out}.stderr")
+                      f"--output {out}.jsonl.part > {out}.summary.json 2> {out}.stderr && mv {out}.jsonl.part {out}.jsonl")
             self.say(f"  e4 {tier['label']} arrival interval {interval}s: replaying {sessions} sessions")
             proc = subprocess.run(self.ssh + [remote], capture_output=True, text=True, timeout=7200)
             self.say(f"  e4 arrival interval {interval}s done (exit {proc.returncode})")
@@ -402,11 +476,17 @@ def main(argv=None):
     p.add_argument("--reps", type=int, default=20, help="e2 repetitions per boost setting")
     p.add_argument("--hold", type=int, default=150,
                    help="Seconds to hold the rollout-started instance before e2/e1b sessions (must outlast them)")
+    p.add_argument("--e2-serial", action="store_true",
+                   help="Configure (and in e2 hold and measure) one function at a time: stays under the CPU quota at 1 vCPU")
+    p.add_argument("--resume", action="store_true",
+                   help="Skip sessions whose output already exists (VM, and locally for WAN runs)")
+    p.add_argument("--skip-wan", action="store_true", help="Don't repeat e1's workstation (WAN) run at the first tier")
     args = p.parse_args(argv)
     boosts = [b.strip() == "on" for b in args.boost.split(",")]
     args.default_boost = True  # the platform default; it matters only for experiments other than e2 (warm ones)
 
     c = Campaign(args)
+    c.load_done()
     tiers = parse_tiers(args.tiers)
     exps = args.experiments.split(",")
     per_tier = [e for e in ("e2", "e1b", "e1", "e3") if e in exps]
@@ -418,7 +498,7 @@ def main(argv=None):
                 if exp == "e2":
                     c.e2(tier, boosts, reps=args.reps)
                 elif exp == "e1":
-                    c.e1(tier, wan=(i == 0))
+                    c.e1(tier, wan=(i == 0 and not args.skip_wan))
                 else:
                     getattr(c, exp)(tier)
             c.sync()
