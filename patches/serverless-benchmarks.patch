@@ -35,14 +35,22 @@ index 00000000..8e4fe000
 +}
 diff --git a/benchmarks/600.mcp/610.api-proxy/config.json b/benchmarks/600.mcp/610.api-proxy/config.json
 new file mode 100644
-index 00000000..4c871d96
+index 00000000..73f7e152
 --- /dev/null
 +++ b/benchmarks/600.mcp/610.api-proxy/config.json
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,14 @@
 +{
 +  "timeout": 60,
 +  "memory": 128,
-+  "languages": ["python"],
++  "languages": [
++    {
++      "language": "python",
++      "variants": [
++        "default",
++        "sdk"
++      ]
++    }
++  ],
 +  "modules": []
 +}
 diff --git a/benchmarks/600.mcp/610.api-proxy/input.py b/benchmarks/600.mcp/610.api-proxy/input.py
@@ -221,16 +229,75 @@ index 00000000..47a8cf9f
 +    }
 +    measurement["process_us"] = _us(perf_counter() - begin)
 +    return {"result": result, "measurement": measurement}
+diff --git a/benchmarks/600.mcp/610.api-proxy/python/sdk/mcp_server.py b/benchmarks/600.mcp/610.api-proxy/python/sdk/mcp_server.py
+new file mode 100644
+index 00000000..32f0b8d2
+--- /dev/null
++++ b/benchmarks/600.mcp/610.api-proxy/python/sdk/mcp_server.py
+@@ -0,0 +1,36 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++"""The api-proxy tool as an MCP server built on the official Python SDK.
++
++Same tool logic as the default variant (function.py), registered the way real MCP
++servers do: an `MCPServer` instance at module level and a decorated, typed tool
++function, whose signature becomes the input schema. The SeBS wrapper finds `mcp`
++here and serves it through the SDK's Streamable HTTP app.
++"""
++
++from typing import Annotated, Any
++
++from mcp.server.mcpserver import MCPServer
++from pydantic import Field
++
++from . import function
++
++mcp = MCPServer("sebs-api-proxy")
++
++
++@mcp.tool()
++def search_products(
++    upstream: Annotated[str, Field(description="Benchmark parameter: base URL of the upstream API.")],
++    latency_ms: Annotated[float, Field(description="Benchmark parameter: upstream response delay in milliseconds.")] = 0,
++    size: Annotated[int, Field(description="Benchmark parameter: upstream response size in bytes.")] = 1024,
++    seed: Annotated[int, Field(description="Benchmark parameter: selects the generated catalog.")] = 0,
++    limit: Annotated[int, Field(description="Maximum number of products to return.")] = 10,
++    in_stock_only: Annotated[bool, Field(description="Only return products that are in stock.")] = True,
++    reuse_connection: Annotated[
++        bool, Field(description="Benchmark parameter: keep the upstream connection alive across calls.")
++    ] = True,
++) -> dict[str, Any]:
++    """Search the product catalog and return the best-rated matching products."""
++    return function.handler(dict(
++        upstream=upstream, latency_ms=latency_ms, size=size, seed=seed, limit=limit,
++        in_stock_only=in_stock_only, reuse_connection=reuse_connection,
++    ))
+diff --git a/benchmarks/600.mcp/610.api-proxy/python/sdk/requirements.txt b/benchmarks/600.mcp/610.api-proxy/python/sdk/requirements.txt
+new file mode 100644
+index 00000000..5d2990cf
+--- /dev/null
++++ b/benchmarks/600.mcp/610.api-proxy/python/sdk/requirements.txt
+@@ -0,0 +1,3 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++# The official MCP Python SDK, pinned so package size and import time are reproducible.
++mcp==2.3.0
 diff --git a/benchmarks/600.mcp/620.fetch-markdown/config.json b/benchmarks/600.mcp/620.fetch-markdown/config.json
 new file mode 100644
-index 00000000..4c871d96
+index 00000000..73f7e152
 --- /dev/null
 +++ b/benchmarks/600.mcp/620.fetch-markdown/config.json
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,14 @@
 +{
 +  "timeout": 60,
 +  "memory": 128,
-+  "languages": ["python"],
++  "languages": [
++    {
++      "language": "python",
++      "variants": [
++        "default",
++        "sdk"
++      ]
++    }
++  ],
 +  "modules": []
 +}
 diff --git a/benchmarks/600.mcp/620.fetch-markdown/input.py b/benchmarks/600.mcp/620.fetch-markdown/input.py
@@ -519,19 +586,86 @@ index 00000000..6181ea20
 +    if start + max_length < len(content):
 +        result["next_start_index"] = start + max_length
 +    return {"result": result, "measurement": measurement}
+diff --git a/benchmarks/600.mcp/620.fetch-markdown/python/sdk/mcp_server.py b/benchmarks/600.mcp/620.fetch-markdown/python/sdk/mcp_server.py
+new file mode 100644
+index 00000000..66e03a88
+--- /dev/null
++++ b/benchmarks/600.mcp/620.fetch-markdown/python/sdk/mcp_server.py
+@@ -0,0 +1,38 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++"""The fetch tool as an MCP server built on the official Python SDK.
++
++Same tool logic as the default variant (function.py), registered the way real MCP
++servers do: an `MCPServer` instance at module level and a decorated, typed tool
++function, whose signature becomes the input schema. The SeBS wrapper finds `mcp`
++here and serves it through the SDK's Streamable HTTP app.
++"""
++
++from typing import Annotated, Any
++
++from mcp.server.mcpserver import MCPServer
++from pydantic import Field
++
++from . import function
++
++mcp = MCPServer("sebs-fetch")
++
++
++@mcp.tool()
++def fetch(
++    upstream: Annotated[str, Field(description="Benchmark parameter: base URL of the page server.")],
++    latency_ms: Annotated[float, Field(description="Benchmark parameter: server response delay in milliseconds.")] = 0,
++    size: Annotated[int, Field(description="Benchmark parameter: page size in bytes.")] = 100000,
++    seed: Annotated[int, Field(description="Benchmark parameter: selects the generated page.")] = 0,
++    max_length: Annotated[int, Field(description="Maximum number of characters to return.")] = 5000,
++    start_index: Annotated[
++        int, Field(description="Return content starting at this character, for paging through long pages.")
++    ] = 0,
++    reuse_connection: Annotated[
++        bool, Field(description="Benchmark parameter: keep the connection alive across calls.")
++    ] = True,
++) -> dict[str, Any]:
++    """Fetch a web page and return its main content as markdown."""
++    return function.handler(dict(
++        upstream=upstream, latency_ms=latency_ms, size=size, seed=seed, max_length=max_length,
++        start_index=start_index, reuse_connection=reuse_connection,
++    ))
+diff --git a/benchmarks/600.mcp/620.fetch-markdown/python/sdk/requirements.txt b/benchmarks/600.mcp/620.fetch-markdown/python/sdk/requirements.txt
+new file mode 100644
+index 00000000..5d2990cf
+--- /dev/null
++++ b/benchmarks/600.mcp/620.fetch-markdown/python/sdk/requirements.txt
+@@ -0,0 +1,3 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++# The official MCP Python SDK, pinned so package size and import time are reproducible.
++mcp==2.3.0
 diff --git a/benchmarks/wrappers/aws/python/handler.py b/benchmarks/wrappers/aws/python/handler.py
-index c544f396..88f0a3e1 100644
+index c544f396..3993bc35 100644
 --- a/benchmarks/wrappers/aws/python/handler.py
 +++ b/benchmarks/wrappers/aws/python/handler.py
-@@ -1,10 +1,59 @@
+@@ -1,10 +1,87 @@
  # Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
  
 -import datetime, io, json, os, sys, uuid
-+import datetime, io, json, os, sys, time, uuid
++import base64, datetime, io, json, os, resource, sys, time, uuid
  
  # Add current directory to allow location of packages
  sys.path.append(os.path.join(os.path.dirname(__file__), '.python_packages/lib/site-packages'))
  
++# SDK variant of an MCP benchmark (it ships function/mcp_server.py): import its MCP server now,
++# in Lambda's init phase, as a real MCP server does. Other packages don't import the bridge at all,
++# so their init phase is unchanged (the stdlib shim path imports the benchmark on first use).
++sdk_bridge = None
++if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'function', 'mcp_server.py')):
++    from function import mcp_sdk_bridge
++    sdk_bridge = mcp_sdk_bridge.SDKBridge('function')
++
++def children_cpu():
++    # CPU time of finished child processes (e.g. ffmpeg), which process_time() does not count.
++    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
++    return usage.ru_utime + usage.ru_stime
++
++
 +def cold_test():
 +    is_cold = False
 +    fname = os.path.join('/tmp', 'cold_run')
@@ -562,15 +696,17 @@ index c544f396..88f0a3e1 100644
 +    def call_tool(arguments):
 +        begin = datetime.datetime.now()
 +        cpu_begin = time.process_time()
++        child_begin = children_cpu()
 +        # The benchmark is imported on first use, so a fresh container's first call pays for it.
 +        import_begin = time.perf_counter()
 +        from function import function
 +        import_us = int((time.perf_counter() - import_begin) * 1e6)
 +        ret = function.handler(arguments)
 +        cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++        child_cpu_us = int((children_cpu() - child_begin) * 1e6)
 +        end = datetime.datetime.now()
 +        return ret, dict(meta, begin=begin.strftime('%s.%f'), end=end.strftime('%s.%f'),
-+                         cpu_us=cpu_us, import_us=import_us)
++                         cpu_us=cpu_us, child_cpu_us=child_cpu_us, import_us=import_us)
 +
 +    response = mcp_shim.handle(message, call_tool, meta)
 +    if response is None:
@@ -581,13 +717,31 @@ index c544f396..88f0a3e1 100644
 +        'body': json.dumps(response),
 +    }
 +
++def sdk_handler(body, headers, context, income_timestamp):
++    """MCP over the official SDK: the raw HTTP request goes to the SDK's Streamable HTTP app."""
++    is_cold, container_id = cold_test()
++    meta = {
++        'income_timestamp': income_timestamp,
++        'is_cold': is_cold,
++        'container_id': container_id,
++        'request_id': context.aws_request_id,
++    }
++    status, response_headers, response_body = sdk_bridge.handle(body, headers, meta)
++    return {'statusCode': status, 'headers': response_headers, 'body': response_body.decode('utf-8')}
++
  # TODO: usual trigger
  # implement support for S3 and others
  def handler(event, context):
-@@ -14,12 +63,21 @@ def handler(event, context):
+@@ -13,13 +90,28 @@ def handler(event, context):
+ 
      # HTTP trigger with API Gateaway
      if 'body' in event:
-         event = json.loads(event['body'])
+-        event = json.loads(event['body'])
++        body = event['body'] or ''
++        body = base64.b64decode(body) if event.get('isBase64Encoded') else body.encode('utf-8')
++        if sdk_bridge is not None and sdk_bridge.is_jsonrpc(body):
++            return sdk_handler(body, event.get('headers') or {}, context, income_timestamp)
++        event = json.loads(body)
 +
 +    # MCP Streamable HTTP: the body is a JSON-RPC message
 +    from function import mcp_shim
@@ -598,15 +752,17 @@ index c544f396..88f0a3e1 100644
      event['income-timestamp'] = income_timestamp
      begin = datetime.datetime.now()
 +    cpu_begin = time.process_time()
++    child_begin = children_cpu()
 +    import_begin = time.perf_counter()
      from function import function
 +    import_us = int((time.perf_counter() - import_begin) * 1e6)
      ret = function.handler(event)
 +    cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++    child_cpu_us = int((children_cpu() - child_begin) * 1e6)
      end = datetime.datetime.now()
  
      log_data = ret
-@@ -36,17 +94,7 @@ def handler(event, context):
+@@ -36,17 +128,7 @@ def handler(event, context):
      else:
          results_time = 0
  
@@ -625,21 +781,546 @@ index c544f396..88f0a3e1 100644
  
      cold_start_var = ""
      if "cold_start" in os.environ:
-@@ -63,6 +111,8 @@ def handler(event, context):
+@@ -63,6 +145,9 @@ def handler(event, context):
              'request_id': context.aws_request_id,
              'cold_start_var': cold_start_var,
              'container_id': container_id,
 +            'cpu_us': cpu_us,
++            'child_cpu_us': child_cpu_us,
 +            'import_us': import_us,
          })
      }
  
+diff --git a/benchmarks/wrappers/azure/python/handler.py b/benchmarks/wrappers/azure/python/handler.py
+index 09d7404b..cb876cd2 100644
+--- a/benchmarks/wrappers/azure/python/handler.py
++++ b/benchmarks/wrappers/azure/python/handler.py
+@@ -1,9 +1,17 @@
+ # Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
+ 
+-import datetime, io, json, os, uuid
++import datetime, io, json, os, resource, time, uuid
+ 
+ import azure.functions as func
+ 
++# SDK variant of an MCP benchmark (it ships mcp_server.py next to this handler): import its MCP
++# server when the worker loads this function, as a real MCP server does at startup. Other
++# packages don't import the bridge at all.
++sdk_bridge = None
++if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mcp_server.py')):
++    from . import mcp_sdk_bridge
++    sdk_bridge = mcp_sdk_bridge.SDKBridge(__package__)
++
+ 
+ if 'NOSQL_STORAGE_DATABASE' in os.environ:
+ 
+@@ -20,18 +28,105 @@ if 'STORAGE_CONNECTION_STRING' in os.environ:
+     from . import storage
+     client = storage.storage.get_instance(os.environ['STORAGE_CONNECTION_STRING'])
+ 
++def children_cpu():
++    # CPU time of finished child processes (e.g. ffmpeg), which process_time() does not count.
++    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
++    return usage.ru_utime + usage.ru_stime
++
++
++def cold_test():
++    is_cold = False
++    fname = os.path.join('/tmp', 'cold_run')
++    if not os.path.exists(fname):
++        is_cold = True
++        container_id = str(uuid.uuid4())[0:8]
++        with open(fname, 'a') as f:
++            f.write(container_id)
++    else:
++        with open(fname, 'r') as f:
++            container_id = f.read()
++    return is_cold, container_id
++
++
++def cold_worker_test():
++    # A function app may run several worker processes; each loads this module once.
++    global cold_marker
++    try:
++        _ = cold_marker
++        return False
++    except NameError:
++        cold_marker = True
++        return True
++
++
++def mcp_handler(req, body, context, income_timestamp):
++    """MCP Streamable HTTP: the body is a JSON-RPC message (stdlib shim) or the raw request goes to the SDK."""
++    # Every MCP request counts, so a call after initialize in a fresh instance is warm.
++    is_cold, container_id = cold_test()
++    meta = {
++        'income_timestamp': income_timestamp,
++        'is_cold': is_cold,
++        'is_cold_worker': cold_worker_test(),
++        'container_id': container_id,
++        'request_id': context.invocation_id,
++    }
++    if sdk_bridge is not None:
++        status, headers, response_body = sdk_bridge.handle(body, dict(req.headers), meta)
++        return func.HttpResponse(response_body, status_code=status, headers=headers)
++
++    from . import mcp_shim
++
++    def call_tool(arguments):
++        begin = datetime.datetime.now()
++        cpu_begin = time.process_time()
++        child_begin = children_cpu()
++        # The benchmark is imported on first use, so a fresh worker's first call pays for it.
++        import_begin = time.perf_counter()
++        from . import function
++        import_us = int((time.perf_counter() - import_begin) * 1e6)
++        ret = function.handler(arguments)
++        cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++        child_cpu_us = int((children_cpu() - child_begin) * 1e6)
++        end = datetime.datetime.now()
++        return ret, dict(meta, begin=begin.strftime('%s.%f'), end=end.strftime('%s.%f'),
++                         cpu_us=cpu_us, child_cpu_us=child_cpu_us, import_us=import_us)
++
++    try:
++        message = json.loads(body)
++    except ValueError:
++        message = None
++    response = mcp_shim.handle(message, call_tool, meta)
++    if response is None:
++        return func.HttpResponse(status_code=202)
++    return func.HttpResponse(json.dumps(response), mimetype="application/json")
++
++
+ # TODO: usual trigger
+ # implement support for blob and others
+ def main(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:
+     income_timestamp = datetime.datetime.now().timestamp()
+-    req_json = req.get_json()
++    body = req.get_body()
++    try:
++        req_json = json.loads(body)
++    except ValueError:
++        req_json = None
++    # MCP Streamable HTTP: the body is a JSON-RPC message
++    from . import mcp_shim
++    if mcp_shim.is_mcp_message(req_json) or (sdk_bridge is not None and sdk_bridge.is_jsonrpc(body)):
++        return mcp_handler(req, body, context, income_timestamp)
+ 
+     req_json['request-id'] = context.invocation_id
+     req_json['income-timestamp'] = income_timestamp
+     begin = datetime.datetime.now()
++    cpu_begin = time.process_time()
++    child_begin = children_cpu()
++    import_begin = time.perf_counter()
+     # We are deployed in the same directory
+     from . import function
++    import_us = int((time.perf_counter() - import_begin) * 1e6)
+     ret = function.handler(req_json)
++    cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++    child_cpu_us = int((children_cpu() - child_begin) * 1e6)
+     end = datetime.datetime.now()
+ 
+     log_data = ret
+@@ -49,25 +144,8 @@ def main(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:
+     else:
+         results_time = 0
+ 
+-    # cold test
+-    is_cold = False
+-    fname = os.path.join('/tmp','cold_run')
+-    if not os.path.exists(fname):
+-        is_cold = True
+-        container_id = str(uuid.uuid4())[0:8]
+-        with open(fname, 'a') as f:
+-            f.write(container_id)
+-    else:
+-        with open(fname, 'r') as f:
+-            container_id = f.read()
+-
+-    is_cold_worker = False
+-    global cold_marker
+-    try:
+-        _ = cold_marker
+-    except NameError:
+-        cold_marker = True
+-        is_cold_worker = True
++    is_cold, container_id = cold_test()
++    is_cold_worker = cold_worker_test()
+ 
+     return func.HttpResponse(
+         json.dumps({
+@@ -79,7 +157,10 @@ def main(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:
+             'is_cold_worker': is_cold_worker,
+             'container_id': container_id,
+             'environ_container_id': os.environ['CONTAINER_NAME'],
+-            'request_id': context.invocation_id
++            'request_id': context.invocation_id,
++            'cpu_us': cpu_us,
++            'child_cpu_us': child_cpu_us,
++            'import_us': import_us,
+         }),
+         mimetype="application/json"
+     )
+diff --git a/benchmarks/wrappers/gcp/python/handler.py b/benchmarks/wrappers/gcp/python/handler.py
+index dabc82a5..cd32b21a 100644
+--- a/benchmarks/wrappers/gcp/python/handler.py
++++ b/benchmarks/wrappers/gcp/python/handler.py
+@@ -1,7 +1,22 @@
+ # Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
+-import datetime, io, json, os, uuid, sys
++import datetime, io, json, os, resource, time, uuid, sys
+ 
+-sys.path.append(os.path.join(os.path.dirname(__file__), '.python_packages/lib/site-packages'))
++_packages = os.path.join(os.path.dirname(__file__), '.python_packages/lib/site-packages')
++_is_sdk = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'function', 'mcp_server.py'))
++if _is_sdk:
++    # The runtime's own packages (functions-framework's starlette, anyio, typing_extensions, ...) are older
++    # than the SDK's and would shadow the ones we ship: pydantic-core then fails to import
++    # (typing_extensions.Sentinel). Only click is imported before this module, so ours must come first.
++    sys.path.insert(0, _packages)
++else:
++    sys.path.append(_packages)
++
++# SDK variant of an MCP benchmark (it ships function/mcp_server.py): import its MCP server now,
++# at instance startup, as a real MCP server does. Other packages don't import the bridge at all.
++sdk_bridge = None
++if _is_sdk:
++    from function import mcp_sdk_bridge
++    sdk_bridge = mcp_sdk_bridge.SDKBridge('function')
+ 
+ # This variable is defined by SeBS during function creation.
+ if 'NOSQL_STORAGE_DATABASE' in os.environ:
+@@ -11,17 +26,101 @@ if 'NOSQL_STORAGE_DATABASE' in os.environ:
+         os.environ['NOSQL_STORAGE_DATABASE']
+     )
+ 
++def children_cpu():
++    # CPU time of finished child processes (e.g. ffmpeg), which process_time() does not count.
++    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
++    return usage.ru_utime + usage.ru_stime
++
++
++def cold_test():
++    is_cold = False
++    fname = os.path.join('/tmp', 'cold_run')
++    if not os.path.exists(fname):
++        is_cold = True
++        container_id = str(uuid.uuid4())[0:8]
++        with open(fname, 'a') as f:
++            f.write(container_id)
++    else:
++        with open(fname, 'r') as f:
++            container_id = f.read()
++    return is_cold, container_id
++
++
++def mcp_handler(req, body, req_id, income_timestamp):
++    """MCP Streamable HTTP: the body is a JSON-RPC message (stdlib shim) or the raw request goes to the SDK."""
++    # Every MCP request counts, so a call after initialize in a fresh instance is warm.
++    is_cold, container_id = cold_test()
++    meta = {
++        'income_timestamp': income_timestamp,
++        'is_cold': is_cold,
++        'container_id': container_id,
++        'request_id': req_id,
++    }
++    if sdk_bridge is not None:
++        status, headers, response_body = sdk_bridge.handle(body, dict(req.headers), meta)
++        return response_body, status, headers
++
++    from function import mcp_shim
++
++    def call_tool(arguments):
++        begin = datetime.datetime.now()
++        cpu_begin = time.process_time()
++        child_begin = children_cpu()
++        # The benchmark is imported on first use, so a fresh instance's first call pays for it.
++        import_begin = time.perf_counter()
++        from function import function
++        import_us = int((time.perf_counter() - import_begin) * 1e6)
++        ret = function.handler(arguments)
++        cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++        child_cpu_us = int((children_cpu() - child_begin) * 1e6)
++        end = datetime.datetime.now()
++        return ret, dict(meta, begin=begin.strftime('%s.%f'), end=end.strftime('%s.%f'),
++                         cpu_us=cpu_us, child_cpu_us=child_cpu_us, import_us=import_us)
++
++    try:
++        message = json.loads(body)
++    except ValueError:
++        message = None
++    response = mcp_shim.handle(message, call_tool, meta)
++    if response is None:
++        return '', 202, {}
++    return json.dumps(response), 200, {'Content-Type': 'application/json'}
++
++
+ def handler(req):
++    # Campaign control, not a benchmark call: keep this instance busy for N seconds. Cloud Run starts an
++    # instance when a revision is deployed; with concurrency 1, a hold on it makes the next request start a new
++    # instance itself, i.e. a request-triggered cold start as on Lambda. Doesn't touch the cold-start marker.
++    hold = req.headers.get('X-Sebs-Hold-S')
++    if hold:
++        time.sleep(min(float(hold), 900))
++        return '', 204
++
+     income_timestamp = datetime.datetime.now().timestamp()
+     req_id = req.headers.get('X-Cloud-Trace-Context') or req.headers.get('Function-Execution-Id')
+ 
+-    req_json = req.get_json()
++    body = req.get_data()
++    try:
++        req_json = json.loads(body)
++    except ValueError:
++        req_json = None
++    # MCP Streamable HTTP: the body is a JSON-RPC message
++    from function import mcp_shim
++    if mcp_shim.is_mcp_message(req_json) or (sdk_bridge is not None and sdk_bridge.is_jsonrpc(body)):
++        return mcp_handler(req, body, req_id, income_timestamp)
++
+     req_json['request-id'] = req_id
+     req_json['income-timestamp'] = income_timestamp
+     begin = datetime.datetime.now()
+-    # We are deployed in the same directorygit status
++    cpu_begin = time.process_time()
++    child_begin = children_cpu()
++    import_begin = time.perf_counter()
++    # We are deployed in the same directory
+     from function import function
++    import_us = int((time.perf_counter() - import_begin) * 1e6)
+     ret = function.handler(req_json)
++    cpu_us = int((time.process_time() - cpu_begin) * 1e6)
++    child_cpu_us = int((children_cpu() - child_begin) * 1e6)
+     end = datetime.datetime.now()
+ 
+ 
+@@ -39,17 +138,7 @@ def handler(req):
+     else:
+         results_time = 0
+ 
+-    # cold test
+-    is_cold = False
+-    fname = os.path.join('/tmp', 'cold_run')
+-    if not os.path.exists(fname):
+-        is_cold = True
+-        container_id = str(uuid.uuid4())[0:8]
+-        with open(fname, 'a') as f:
+-            f.write(container_id)
+-    else:
+-        with open(fname, 'r') as f:
+-            container_id = f.read()
++    is_cold, container_id = cold_test()
+ 
+     cold_start_var = ""
+     if "cold_start" in os.environ:
+@@ -64,4 +153,7 @@ def handler(req):
+             'request_id': req_id,
+             'cold_start_var': cold_start_var,
+             'container_id': container_id,
++            'cpu_us': cpu_us,
++            'child_cpu_us': child_cpu_us,
++            'import_us': import_us,
+         }), 200, {'ContentType': 'application/json'}
+diff --git a/benchmarks/wrappers/mcp/python/mcp_sdk_bridge.py b/benchmarks/wrappers/mcp/python/mcp_sdk_bridge.py
+new file mode 100644
+index 00000000..f58d2164
+--- /dev/null
++++ b/benchmarks/wrappers/mcp/python/mcp_sdk_bridge.py
+@@ -0,0 +1,188 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++"""Serve a benchmark built on the official MCP Python SDK from a SeBS function.
++
++The `sdk` language variant of an MCP benchmark adds `mcp_server.py`, an ordinary SDK
++server (`mcp = MCPServer(...)` with `@mcp.tool()` functions), and the SDK in its
++requirements. This module runs that server the way it runs in production on a function
++platform: the SDK's own Streamable HTTP app (stateless, JSON responses) behind an
++in-process ASGI adapter, as Mangum on Lambda or AsgiMiddleware on Azure do. The
++platform wrapper hands over the raw HTTP body and headers, so both protocol eras work:
++the handshake era (`initialize` first) and 2026-07-28 (self-contained requests).
++
++Unlike the stdlib shim, the server module (and with it the SDK) is imported when
++the wrapper loads, i.e. at instance startup, as real MCP servers do. That time is
++reported as `init_import_us`; `init_us` adds building the app and starting it.
++
++SeBS measurements reach the client in `_meta.sebs` of every result, added by an SDK
++server middleware, so the benchmark code itself stays free of SeBS specifics. For
++`tools/call` the middleware times the call through the SDK (argument validation, the
++tool in its worker thread, result conversion): `begin`/`end`, `cpu_us`, `child_cpu_us`.
++
++Only the standard library is imported at module level here; the SDK comes with the
++benchmark's `mcp_server`.
++"""
++
++import asyncio
++import datetime
++import importlib
++import json
++import os
++import resource
++import threading
++import time
++
++SERVER_MODULE = "mcp_server"
++
++
++def is_sdk_package(code_dir: str) -> bool:
++    """True if the deployed code is an SDK variant (it ships the benchmark's SDK server)."""
++    return os.path.exists(os.path.join(code_dir, SERVER_MODULE + ".py"))
++
++
++def is_jsonrpc(body: bytes) -> bool:
++    """A JSON-RPC message or batch, as opposed to a plain SeBS invocation."""
++    try:
++        message = json.loads(body)
++    except ValueError:
++        return False
++    messages = message if isinstance(message, list) else [message]
++    return bool(messages) and all(isinstance(m, dict) and m.get("jsonrpc") == "2.0" for m in messages)
++
++
++def _children_cpu():
++    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
++    return usage.ru_utime + usage.ru_stime
++
++
++class _SebsMeta:
++    """SDK server middleware: adds the wrapper's measurements to every result's `_meta.sebs`."""
++
++    def __init__(self, bridge):
++        self.bridge = bridge
++
++    async def __call__(self, ctx, call_next):
++        meta = dict(self.bridge.request_meta)
++        if ctx.method == "tools/call":
++            begin = datetime.datetime.now()
++            cpu_begin, child_begin = time.process_time(), _children_cpu()
++            result = await call_next(ctx)
++            end = datetime.datetime.now()
++            meta.update(
++                begin=begin.strftime("%s.%f"),
++                end=end.strftime("%s.%f"),
++                cpu_us=int((time.process_time() - cpu_begin) * 1e6),
++                child_cpu_us=int((_children_cpu() - child_begin) * 1e6),
++                import_us=0,  # the server was imported at startup, see init_import_us
++            )
++        else:
++            result = await call_next(ctx)
++        if ctx.request_id is None:  # notification: no result to annotate
++            return result
++        if isinstance(result, dict):
++            result.setdefault("_meta", {})["sebs"] = meta
++        elif result is not None and hasattr(result, "meta"):
++            result.meta = {**(result.meta or {}), "sebs": meta}
++        return result
++
++
++class SDKBridge:
++    """One per instance: imports the benchmark's SDK server, starts its HTTP app, serves requests."""
++
++    is_jsonrpc = staticmethod(is_jsonrpc)
++
++    def __init__(self, package: str):
++        begin = time.perf_counter()
++        module = importlib.import_module(f"{package}.{SERVER_MODULE}")
++        self.init_import_us = int((time.perf_counter() - begin) * 1e6)
++
++        self.server = module.mcp
++        self.server.middleware.append(_SebsMeta(self))
++        # host="0.0.0.0": no DNS-rebinding allowlist. The SDK enables one for 127.0.0.1/localhost
++        # only; behind a platform endpoint the Host header is the function's public name.
++        self.app = self.server.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")
++        self.loop = asyncio.new_event_loop()
++        self.lock = threading.Lock()  # one request at a time, like a function instance
++        self.request_meta = {}
++        self._lifespan_events = asyncio.Queue()
++        self.loop.run_until_complete(self._start())
++        self.init_us = int((time.perf_counter() - begin) * 1e6)
++        self.versions = self._loaded_versions()
++
++    @staticmethod
++    def _loaded_versions():
++        """Versions of the SDK stack actually imported. A platform runtime may ship some of these
++        packages itself (GCP's functions-framework brings starlette and anyio) ahead of ours."""
++        import importlib.metadata
++        import sys
++        versions = {}
++        for module, distribution in (("mcp", "mcp"), ("starlette", "starlette"), ("anyio", "anyio"),
++                                     ("pydantic", "pydantic")):
++            loaded = sys.modules.get(module)
++            path = os.path.dirname(getattr(loaded, "__file__", "") or "")
++            try:
++                dist = next((d for d in importlib.metadata.distributions(path=[os.path.dirname(path)])
++                             if d.metadata["Name"].lower() == distribution), None)
++                versions[module] = dist.version if dist else importlib.metadata.version(distribution)
++            except Exception:  # never fail a request over a diagnostic
++                versions[module] = None
++        return versions
++
++    async def _start(self):
++        started = self.loop.create_future()
++
++        async def receive():
++            return await self._lifespan_events.get()
++
++        async def send(message):
++            if message["type"] == "lifespan.startup.complete":
++                started.set_result(None)
++            elif message["type"] == "lifespan.startup.failed":
++                started.set_exception(RuntimeError(message.get("message", "lifespan startup failed")))
++
++        # The lifespan task stays pending for the life of the instance: it holds the SDK's session manager.
++        self._lifespan = self.loop.create_task(self.app({"type": "lifespan", "asgi": {"version": "3.0"}}, receive, send))
++        await self._lifespan_events.put({"type": "lifespan.startup"})
++        await started
++
++    def handle(self, body: bytes, headers: dict, meta: dict):
++        """Serve one HTTP request (POST to the MCP endpoint). Returns (status, headers, body)."""
++        with self.lock:
++            self.request_meta = dict(meta, init_import_us=self.init_import_us, init_us=self.init_us)
++            if meta.get("is_cold"):  # once per instance, to keep warm responses unchanged
++                self.request_meta["sdk_versions"] = self.versions
++            return self.loop.run_until_complete(self._request(body, headers))
++
++    async def _request(self, body: bytes, headers: dict):
++        scope = {
++            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
++            "scheme": "https", "path": "/mcp", "raw_path": b"/mcp", "query_string": b"", "root_path": "",
++            "headers": [(str(k).lower().encode("latin-1"), str(v).encode("latin-1")) for k, v in headers.items()],
++            "client": ("0.0.0.0", 0), "server": ("function", 443),
++        }
++        done = asyncio.Event()
++        body_sent = False
++        response = {"status": 500, "headers": {}, "body": b""}
++
++        async def receive():
++            nonlocal body_sent
++            if not body_sent:
++                body_sent = True
++                return {"type": "http.request", "body": body, "more_body": False}
++            await done.wait()
++            return {"type": "http.disconnect"}
++
++        async def send(message):
++            if message["type"] == "http.response.start":
++                response["status"] = message["status"]
++                response["headers"] = {k.decode("latin-1"): v.decode("latin-1") for k, v in message.get("headers", [])}
++            elif message["type"] == "http.response.body":
++                response["body"] += message.get("body", b"")
++                if not message.get("more_body", False):
++                    done.set()
++
++        try:
++            await self.app(scope, receive, send)
++        finally:
++            done.set()
++        response["headers"].pop("content-length", None)  # platforms set their own
++        return response["status"], response["headers"], response["body"]
 diff --git a/benchmarks/wrappers/mcp/python/mcp_shim.py b/benchmarks/wrappers/mcp/python/mcp_shim.py
 new file mode 100644
-index 00000000..c29d520d
+index 00000000..e2b4efbe
 --- /dev/null
 +++ b/benchmarks/wrappers/mcp/python/mcp_shim.py
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,182 @@
 +# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
 +"""Minimal MCP server shim that exposes a SeBS benchmark as a single MCP tool.
 +
@@ -647,6 +1328,14 @@ index 00000000..c29d520d
 +POST carries one JSON-RPC message, and the server answers with a single
 +application/json response (no SSE, no Mcp-Session-Id). This is the mode
 +serverless MCP hosts (Lambda, Workers, Vercel) run in.
++
++Both protocol eras are served. Handshake revisions (up to 2025-11-25) start a session
++with `initialize`. In 2026-07-28 every request is self-contained: it names its protocol
++version (and the client) in `params._meta`, `initialize` and `ping` are gone, a client
++may probe `server/discover` instead, and results carry `resultType` (and the cacheable
++ones `cacheScope`/`ttlMs`). Responses to handshake-era requests are unchanged. The
++`Mcp-Method`/`Mcp-Name` headers that 2026-07-28 clients send are not checked, since the
++wrappers pass only the body.
 +
 +The shim deliberately uses only the standard library, so wrapping a
 +benchmark as an MCP tool does not change its package size or import time;
@@ -663,13 +1352,20 @@ index 00000000..c29d520d
 +import json
 +import os
 +
-+PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"]
++PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"]  # handshake era
++MODERN_PROTOCOL_VERSIONS = ["2026-07-28"]  # no handshake
 +SERVER_INFO = {"name": "sebs-mcp", "version": "0.1.0"}
 +
 +PARSE_ERROR = -32700
 +INVALID_REQUEST = -32600
 +METHOD_NOT_FOUND = -32601
 +INVALID_PARAMS = -32602
++UNSUPPORTED_PROTOCOL_VERSION = -32022
++
++PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion"
++SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
++# Like the SDK's default: tools/list and discover results may not be cached across requests.
++CACHE = {"cacheScope": "private", "ttlMs": 0}
 +
 +_tool = None
 +
@@ -722,6 +1418,10 @@ index 00000000..c29d520d
 +
 +    sebs_meta = {"_meta": {"sebs": meta}} if meta else {}
 +
++    request_meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
++    if PROTOCOL_VERSION_META in request_meta:
++        return _handle_modern(msg_id, method, params, request_meta[PROTOCOL_VERSION_META], call_tool, meta)
++
 +    if method == "initialize":
 +        requested = params.get("protocolVersion")
 +        version = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
@@ -742,64 +1442,126 @@ index 00000000..c29d520d
 +        return _result(msg_id, {"tools": [tool_definition()], **sebs_meta})
 +
 +    if method == "tools/call":
-+        name = params.get("name")
-+        if name != tool_definition()["name"]:
-+            return _error(msg_id, INVALID_PARAMS, f"Unknown tool: {name}")
-+        arguments = params.get("arguments") or {}
-+        try:
-+            result, meta = call_tool(arguments)
-+        except Exception as e:
-+            # Tool failures are reported in the result so the model can see them.
-+            return _result(
-+                msg_id,
-+                {
-+                    "content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}],
-+                    "isError": True,
-+                },
-+            )
-+        content = {
-+            "content": [{"type": "text", "text": json.dumps(result)}],
-+            "isError": False,
-+            "_meta": {"sebs": meta},
-+        }
-+        if isinstance(result, dict):
-+            content["structuredContent"] = result
-+        return _result(msg_id, content)
++        return _call_tool(msg_id, params, call_tool)
 +
 +    return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
++
++
++def _call_tool(msg_id, params, call_tool, extra=None):
++    name = params.get("name")
++    if name != tool_definition()["name"]:
++        return _error(msg_id, INVALID_PARAMS, f"Unknown tool: {name}")
++    arguments = params.get("arguments") or {}
++    try:
++        result, meta = call_tool(arguments)
++    except Exception as e:
++        # Tool failures are reported in the result so the model can see them.
++        return _result(
++            msg_id,
++            {
++                "content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}],
++                "isError": True,
++                **(extra or {}),
++            },
++        )
++    content = {
++        "content": [{"type": "text", "text": json.dumps(result)}],
++        "isError": False,
++        "_meta": {"sebs": meta},
++        **(extra or {}),
++    }
++    if isinstance(result, dict):
++        content["structuredContent"] = result
++    return _result(msg_id, content)
++
++
++def _handle_modern(msg_id, method, params, version, call_tool, meta):
++    """A 2026-07-28 request: no session, the version comes with every request."""
++    if version not in MODERN_PROTOCOL_VERSIONS:
++        error = _error(msg_id, UNSUPPORTED_PROTOCOL_VERSION, f"Unsupported protocol version: {version}")
++        error["error"]["data"] = {"supported": MODERN_PROTOCOL_VERSIONS + PROTOCOL_VERSIONS, "requested": version}
++        return error
++    complete = {"resultType": "complete"}
++    sebs_meta = {"sebs": meta} if meta else {}
++
++    if method == "server/discover":
++        return _result(msg_id, {
++            "supportedVersions": MODERN_PROTOCOL_VERSIONS,
++            "capabilities": {"tools": {"listChanged": False}},
++            **complete, **CACHE,
++            "_meta": {SERVER_INFO_META: SERVER_INFO, **sebs_meta},
++        })
++
++    if method == "tools/list":
++        result = {"tools": [tool_definition()], **complete, **CACHE}
++        if sebs_meta:
++            result["_meta"] = sebs_meta
++        return _result(msg_id, result)
++
++    if method == "tools/call":
++        return _call_tool(msg_id, params, call_tool, complete)
++
++    # initialize and ping no longer exist; other features are not offered.
++    return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
 diff --git a/configs/systems.json b/configs/systems.json
-index a3640c1f..0454479b 100644
+index a3640c1f..de4d7fa1 100644
 --- a/configs/systems.json
 +++ b/configs/systems.json
-@@ -38,7 +38,8 @@
+@@ -38,7 +38,9 @@
          "deployment": {
            "files": [
              "storage.py",
 -            "nosql.py"
 +            "nosql.py",
-+            "../../mcp/python/mcp_shim.py"
++            "../../mcp/python/mcp_shim.py",
++            "../../mcp/python/mcp_sdk_bridge.py"
            ],
            "packages": [],
            "module_packages": {
-@@ -111,7 +112,8 @@
+@@ -111,7 +113,9 @@
              "handler.py",
              "storage.py",
              "nosql.py",
 -            "setup.py"
 +            "setup.py",
-+            "../../mcp/python/mcp_shim.py"
++            "../../mcp/python/mcp_shim.py",
++            "../../mcp/python/mcp_sdk_bridge.py"
            ],
            "packages": [],
            "module_packages": {}
+@@ -221,7 +225,9 @@
+           "files": [
+             "handler.py",
+             "storage.py",
+-            "nosql.py"
++            "nosql.py",
++            "../../mcp/python/mcp_shim.py",
++            "../../mcp/python/mcp_sdk_bridge.py"
+           ],
+           "packages": [],
+           "module_packages": {
+@@ -312,7 +318,9 @@
+             "handler.py",
+             "storage.py",
+             "nosql.py",
+-            "setup.py"
++            "setup.py",
++            "../../mcp/python/mcp_shim.py",
++            "../../mcp/python/mcp_sdk_bridge.py"
+           ],
+           "packages": [],
+           "module_packages": {
 diff --git a/dockerfiles/local/python/server.py b/dockerfiles/local/python/server.py
-index 78312b12..7fd21b1c 100644
+index 78312b12..140dd1b5 100644
 --- a/dockerfiles/local/python/server.py
 +++ b/dockerfiles/local/python/server.py
-@@ -1,10 +1,11 @@
+@@ -1,12 +1,37 @@
  import datetime
 +import json
  import os
++import resource
  import sys
++import time
  import uuid
  
  import bottle
@@ -807,8 +1569,52 @@ index 78312b12..7fd21b1c 100644
 +from bottle import route, run, template, request, response
  
  CODE_LOCATION='/function'
++
++
++class CPUTimer:
++    """CPU time of a call: this process (cpu_us) and its finished child processes (child_cpu_us).
++
++    process_time() misses work done in subprocesses, e.g. ffmpeg in 220.video-processing.
++    """
++
++    def __init__(self):
++        self.cpu = time.process_time()
++        self.children = self._children()
++
++    @staticmethod
++    def _children():
++        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
++        return usage.ru_utime + usage.ru_stime
++
++    def stop(self):
++        return {
++            'cpu_us': int((time.process_time() - self.cpu) * 1e6),
++            'child_cpu_us': int((self._children() - self.children) * 1e6),
++        }
  # Each container runs one server process, so its first request is a cold start
-@@ -34,6 +35,31 @@ def process_request():
+ cold_start = True
+ 
+@@ -21,20 +46,71 @@ def process_request():
+     global cold_start
+     is_cold, cold_start = cold_start, False
+     begin = datetime.datetime.now()
++    cpu = CPUTimer()
++    import_begin = time.perf_counter()
+     from function import function
+-    end = datetime.datetime.now()
+-    # FIXME: measurements?
++    import_us = int((time.perf_counter() - import_begin) * 1e6)
+     ret = function.handler(request.json)
++    # Time the function call, as the cloud wrappers do (end was taken before the call).
++    end = datetime.datetime.now()
+ 
+     return {
+         'begin': begin.strftime('%s.%f'),
+         'end': end.strftime('%s.%f'),
+         "request_id": str(uuid.uuid4()),
+         "is_cold": is_cold,
++        "import_us": import_us,
++        **cpu.stop(),
          "result": ret
      }
  
@@ -816,15 +1622,27 @@ index 78312b12..7fd21b1c 100644
 +def process_mcp_request():
 +    global cold_start
 +    is_cold, cold_start = cold_start, False
-+    from function import mcp_shim
 +    meta = {'request_id': str(uuid.uuid4()), 'is_cold': is_cold}
++    if sdk_bridge is not None:
++        # SDK variant: the raw HTTP request goes to the SDK's Streamable HTTP app.
++        status, headers, body = sdk_bridge.handle(request.body.read(), dict(request.headers), meta)
++        response.status = status
++        for key, value in headers.items():
++            response.set_header(key, value)
++        return body
++    from function import mcp_shim
 +
 +    def call_tool(arguments):
 +        begin = datetime.datetime.now()
++        cpu = CPUTimer()
++        # The benchmark is imported on first use, so a fresh container's first call pays for it.
++        import_begin = time.perf_counter()
 +        from function import function
++        import_us = int((time.perf_counter() - import_begin) * 1e6)
 +        ret = function.handler(arguments)
 +        end = datetime.datetime.now()
-+        return ret, dict(meta, begin=begin.strftime('%s.%f'), end=end.strftime('%s.%f'))
++        return ret, dict(meta, begin=begin.strftime('%s.%f'), end=end.strftime('%s.%f'),
++                         import_us=import_us, **cpu.stop())
 +
 +    try:
 +        message = json.loads(request.body.read())
@@ -839,12 +1657,66 @@ index 78312b12..7fd21b1c 100644
 +
  sys.path.append(os.path.join(CODE_LOCATION))
  sys.path.append(os.path.join(CODE_LOCATION, '.python_packages/lib/site-packages/'))
++
++# SDK variant of an MCP benchmark: import its MCP server at startup, as a real MCP server does.
++# SeBS waits for /alive before invoking, so this time is not in the first request's latency
++# (it is on Lambda, whose init phase precedes the first request); it is reported as init_import_us.
++sdk_bridge = None
++if os.path.exists(os.path.join(CODE_LOCATION, 'function', 'mcp_server.py')):
++    from function import mcp_sdk_bridge
++    sdk_bridge = mcp_sdk_bridge.SDKBridge('function')
++
  run(host='0.0.0.0', port=int(sys.argv[1]), debug=True)
+ 
+diff --git a/sebs/aws/aws.py b/sebs/aws/aws.py
+index dd7077d1..9c512c14 100644
+--- a/sebs/aws/aws.py
++++ b/sebs/aws/aws.py
+@@ -609,7 +609,7 @@ class AWS(System):
+         func_name = "sebs-{}-{}-{}-{}-{}".format(
+             resource_id,
+             benchmark_number,
+-            code_package.language_name,
++            code_package.language_tag,
+             code_package.language_version,
+             code_package.architecture,
+         )
+diff --git a/sebs/azure/azure.py b/sebs/azure/azure.py
+index 6fbb7906..a7752b8e 100644
+--- a/sebs/azure/azure.py
++++ b/sebs/azure/azure.py
+@@ -741,7 +741,7 @@ class Azure(System):
+             "sebs-{}-{}-{}-{}".format(
+                 self.config.resources.resources_id,
+                 code_package.benchmark,
+-                code_package.language_name,
++                code_package.language_tag,
+                 code_package.language_version,
+             )
+             .replace(".", "-")
 diff --git a/sebs/benchmark.py b/sebs/benchmark.py
-index dff775f1..abd5e07c 100644
+index dff775f1..9540e7e8 100644
 --- a/sebs/benchmark.py
 +++ b/sebs/benchmark.py
-@@ -714,13 +714,19 @@ class Benchmark(LoggingBase):
+@@ -462,6 +462,17 @@ class Benchmark(LoggingBase):
+         """
+         return self._language.value
+ 
++    @property
++    def language_tag(self) -> str:
++        """Language name, plus the variant unless it is the default ("python", "python-sdk").
++
++        Used in function names, so that variants of a benchmark deploy as separate
++        functions instead of replacing each other.
++        """
++        if self._language_variant == "default":
++            return self.language_name
++        return f"{self.language_name}-{self._language_variant}"
++
+     @property
+     def language_variant(self) -> str:
+         """Get the language runtime variant.
+@@ -714,13 +725,19 @@ class Benchmark(LoggingBase):
                          for f in glob.glob(os.path.join(variant_dir, file_type)):
                              with open(f, "rb") as opened_file:
                                  hash_sum.update(opened_file.read())
@@ -869,7 +1741,7 @@ index dff775f1..abd5e07c 100644
                  if os.path.isdir(f):
                      for root, _, files in os.walk(f):
                          for file in files:
-@@ -798,6 +804,11 @@ class Benchmark(LoggingBase):
+@@ -798,6 +815,11 @@ class Benchmark(LoggingBase):
              for f in glob.glob(os.path.join(path, file_type)):
                  shutil.copy2(os.path.join(path, f), output_dir)
  
@@ -881,3 +1753,60 @@ index dff775f1..abd5e07c 100644
          # support node.js benchmarks with language specific packages
          nodejs_package_json = os.path.join(path, f"package.json.{self.language_version}")
          if os.path.exists(nodejs_package_json):
+diff --git a/sebs/faas/function.py b/sebs/faas/function.py
+index 01abe06f..801b2f22 100644
+--- a/sebs/faas/function.py
++++ b/sebs/faas/function.py
+@@ -551,6 +551,8 @@ class Variant:
+ 
+         DEFAULT = "default"
+         PYPY = "pypy"
++        # MCP benchmarks served through the official MCP Python SDK instead of the stdlib shim
++        SDK = "sdk"
+ 
+     class NodeJS(Enum):
+         """Node.js runtime variants."""
+diff --git a/sebs/gcp/gcp.py b/sebs/gcp/gcp.py
+index ef15f8e3..d504c899 100644
+--- a/sebs/gcp/gcp.py
++++ b/sebs/gcp/gcp.py
+@@ -2417,7 +2417,7 @@ class GCP(System):
+         func_name = "sebs-{}-{}-{}-{}-{}".format(
+             resource_id,
+             benchmark_number,
+-            code_package.language_name,
++            code_package.language_tag,
+             code_package.language_version,
+             code_package.architecture,
+         )
+diff --git a/sebs/local/local.py b/sebs/local/local.py
+index 1561c1ed..51a4dabe 100644
+--- a/sebs/local/local.py
++++ b/sebs/local/local.py
+@@ -300,7 +300,9 @@ class Local(System):
+ 
+         variant = code_package.language_variant
+         language_version = code_package.language_version
+-        if variant != "default":
++        # Runtime variants (pypy, bun, ...) have their own run image; code-only variants
++        # (sdk: different code and dependencies on the same runtime) use the default one.
++        if variant not in ("default", "sdk"):
+             language_version = f"{variant}.{language_version}"
+         container_name = self._system_config.docker_image_name(
+             self.name(), "run", code_package.language_name, language_version
+@@ -659,13 +661,13 @@ class Local(System):
+             func_name = "sebs-{}-{}-{}-{}".format(
+                 resources.resources_id,
+                 code_package.benchmark,
+-                code_package.language_name,
++                code_package.language_tag,
+                 code_package.language_version,
+             )
+         else:
+             func_name = "sebd-{}-{}-{}".format(
+                 code_package.benchmark,
+-                code_package.language_name,
++                code_package.language_tag,
+                 code_package.language_version,
+             )
+         return func_name

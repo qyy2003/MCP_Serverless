@@ -5,7 +5,10 @@ and the remaining wrappers in function/), and each request is turned into a
 Function URL event for the real wrapper's handler(event, context). The process
 plays the role of one Lambda container: its first request is the cold start.
 
-    python tests/fake_lambda.py <benchmark-dir> <port>
+    python tests/fake_lambda.py <benchmark-dir> <port> [<language-variant>]
+
+Dependencies are not installed: for a variant that needs some (e.g. `sdk`), run this
+script with an interpreter that has them.
 """
 
 import json
@@ -22,11 +25,17 @@ SEBS = os.path.join(ROOT, "serverless-benchmarks")
 WRAPPERS = os.path.join(SEBS, "benchmarks", "wrappers")
 
 
-def package(benchmark_dir: str) -> str:
+def package(benchmark_dir: str, variant: str = "default") -> str:
     """Build the code package like Benchmark.build + AWS.package_code, without dependencies."""
     directory = tempfile.mkdtemp(prefix="sebs-package-")
     function_dir = os.path.join(directory, "function")
     shutil.copytree(os.path.join(benchmark_dir, "python"), function_dir)
+    if variant != "default":
+        # Overlay variant, as Benchmark.copy_code applies it: the variant's files over the default ones.
+        variant_dir = os.path.join(benchmark_dir, "python", variant)
+        for name in os.listdir(variant_dir):
+            if name.endswith(".py") or name.startswith("requirements.txt"):
+                shutil.copy2(os.path.join(variant_dir, name), function_dir)
     shutil.copy2(os.path.join(benchmark_dir, "mcp.json"), function_dir)
     with open(os.path.join(SEBS, "configs", "systems.json")) as f:
         files = json.load(f)["aws"]["languages"]["python"]["deployment"]["files"]
@@ -42,8 +51,8 @@ class Context:
         self.aws_request_id = str(uuid.uuid4())
 
 
-def serve(benchmark_dir: str, port: int):
-    directory = package(benchmark_dir)
+def serve(benchmark_dir: str, port: int, variant: str = "default"):
+    directory = package(benchmark_dir, variant)
     # Each Lambda instance has its own /tmp, where the wrapper keeps its cold-start
     # marker. Point the marker at a directory private to this fake container.
     handler_path = os.path.join(directory, "handler.py")
@@ -68,8 +77,10 @@ def serve(benchmark_dir: str, port: int):
 
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+            # Function URL events carry the request headers with lowercase names.
+            headers = {key.lower(): value for key, value in self.headers.items()}
             with instance:
-                ret = handler.handler({"body": body, "isBase64Encoded": False}, Context())
+                ret = handler.handler({"body": body, "headers": headers, "isBase64Encoded": False}, Context())
             # Function URLs return the handler's statusCode/headers/body as the HTTP response.
             payload = ret.get("body", "").encode()
             self.send_response(ret.get("statusCode", 200))
@@ -87,4 +98,4 @@ def serve(benchmark_dir: str, port: int):
 
 
 if __name__ == "__main__":
-    serve(sys.argv[1], int(sys.argv[2]))
+    serve(sys.argv[1], int(sys.argv[2]), *sys.argv[3:4])

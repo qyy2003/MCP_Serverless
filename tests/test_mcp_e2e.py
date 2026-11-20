@@ -26,15 +26,19 @@ def free_port() -> int:
 
 
 class FakeLambda:
-    def __init__(self, benchmark: str):
+    """A fake function instance running the real wrapper of `platform` (aws, gcp or azure)."""
+
+    def __init__(self, benchmark: str, variant: str = "default", python: str = sys.executable,
+                 platform: str = "aws"):
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}/"
-        self.proc = subprocess.Popen(
-            [sys.executable, os.path.join(ROOT, "tests", "fake_lambda.py"),
-             os.path.join(BENCHMARKS, benchmark), str(self.port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
-        deadline = time.time() + 10
+        benchmark_dir = os.path.join(BENCHMARKS, benchmark)
+        if platform == "aws":
+            command = [os.path.join(ROOT, "tests", "fake_lambda.py"), benchmark_dir, str(self.port), variant]
+        else:
+            command = [os.path.join(ROOT, "tests", "fake_cloud.py"), platform, benchmark_dir, str(self.port), variant]
+        self.proc = subprocess.Popen([python, *command], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        deadline = time.time() + 30  # an SDK variant imports the SDK before it listens
         while time.time() < deadline:
             try:
                 socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()

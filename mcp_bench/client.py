@@ -7,7 +7,16 @@ The same function can be invoked in `plain` mode (the benchmark input posted
 as-is, as SeBS does) to isolate the cost of the MCP protocol.
 
     python -m mcp_bench.client --url http://host:9000/mcp --arguments '{"sleep": 0.1}'
+    python -m mcp_bench.client --url http://host:9000/mcp --protocol modern --arguments '{"sleep": 0.1}'
     python -m mcp_bench.client --url http://host:9000/ --mode plain --arguments '{"sleep": 0.1}'
+
+Protocol revisions (--protocol):
+- legacy: the handshake revisions (default; what all earlier measurements used): a session
+  starts with initialize + notifications/initialized.
+- modern: 2026-07-28, pinned: no handshake; every request carries the protocol version and
+  client info in params._meta and the Mcp-Method (and, for tools/call, Mcp-Name) headers.
+- auto: what the official SDK client does by default: probe server/discover at 2026-07-28 and
+  fall back to the handshake if the server doesn't speak it.
 
 Only the standard library is used, so the driver runs anywhere.
 """
@@ -15,6 +24,8 @@ Only the standard library is used, so the driver runs anywhere.
 import argparse
 import http.client
 import json
+import os
+import secrets
 import socket
 import statistics
 import sys
@@ -23,7 +34,9 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlsplit
 
-PROTOCOL_VERSION = "2025-06-18"
+PROTOCOL_VERSION = "2025-06-18"  # handshake revision requested by `initialize`
+MODERN_PROTOCOL_VERSION = "2026-07-28"
+PROTOCOLS = ("legacy", "modern", "auto")
 CLIENT_INFO = {"name": "mcp-serverless-bench", "version": "0.1.0"}
 
 
@@ -33,6 +46,12 @@ def _us(seconds: float) -> int:
 
 class Connection:
     """One keep-alive HTTP connection that times connect, first byte and total per request."""
+
+    # Send a fresh X-Cloud-Trace-Context with every request (--trace-header, or MCP_BENCH_TRACE_HEADER=1 for
+    # the replay driver). Cloud Run logs it as the request's trace, so every request, including handshake
+    # and 202 responses, can be matched with its entry in the platform's request log (GCP's counterpart of
+    # x-amzn-RequestId).
+    send_trace = os.environ.get("MCP_BENCH_TRACE_HEADER") == "1"
 
     def __init__(self, url: str, timeout: float = 900):
         parts = urlsplit(url)
@@ -52,6 +71,10 @@ class Connection:
             self._conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self._connected = True
             timing["connect_us"] = _us(time.perf_counter() - begin)
+        if self.send_trace:
+            trace_id = secrets.token_hex(16)
+            headers = dict(headers, **{"X-Cloud-Trace-Context": f"{trace_id}/{secrets.randbits(63) or 1};o=0"})
+            timing["trace_id"] = trace_id
         sent = time.perf_counter()
         self._conn.request("POST", self.path, body=body, headers=headers)
         response = self._conn.getresponse()
@@ -90,7 +113,7 @@ def _server_times(meta: dict) -> dict:
     if not meta:
         return {}
     times = {"is_cold": meta.get("is_cold"), "container_id": meta.get("container_id")}
-    for key in ("request_id", "cpu_us", "import_us"):
+    for key in ("request_id", "cpu_us", "child_cpu_us", "import_us", "init_import_us", "init_us", "sdk_versions"):
         if key in meta:
             times[key] = meta[key]
     if "begin" in meta and "end" in meta:
@@ -111,15 +134,32 @@ def _tool_measurement(output) -> dict:
 class MCPClient:
     """Stateless-friendly MCP client; follows Mcp-Session-Id if the server assigns one."""
 
-    def __init__(self, url: str, fresh_connection: bool = False):
+    def __init__(self, url: str, fresh_connection: bool = False, protocol: str = "legacy"):
+        if protocol not in PROTOCOLS:
+            raise ValueError(f"protocol must be one of {PROTOCOLS}, got {protocol!r}")
         self.url = url
         self.fresh_connection = fresh_connection
+        self.protocol = protocol
         self.conn = Connection(url)
         self.session_id: Optional[str] = None
         self.protocol_version: Optional[str] = None
+        # 2026-07-28: no handshake, so the version is fixed up front (auto settles it in connect()).
+        self.modern = protocol == "modern"
+        if self.modern:
+            self.protocol_version = MODERN_PROTOCOL_VERSION
         self._next_id = 0
 
-    def _send(self, method: str, params: Optional[dict] = None, notification: bool = False):
+    def _exchange(self, method: str, params: Optional[dict] = None, notification: bool = False):
+        """Send one message; returns (status, response message or None, record). Raises only on transport errors."""
+        if self.modern:
+            # Each 2026-07-28 request is self-contained: it names the version and the client itself.
+            params = dict(params or {})
+            params["_meta"] = {
+                **params.get("_meta", {}),
+                "io.modelcontextprotocol/protocolVersion": self.protocol_version,
+                "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         message = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             message["params"] = params
@@ -132,6 +172,11 @@ class MCPClient:
         }
         if self.protocol_version:
             headers["MCP-Protocol-Version"] = self.protocol_version
+        if self.modern:
+            # Mirrored into headers so gateways can route without parsing the body.
+            headers["Mcp-Method"] = method
+            if method == "tools/call":
+                headers["Mcp-Name"] = params["name"]
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
 
@@ -142,13 +187,20 @@ class MCPClient:
         session = {k.lower(): v for k, v in resp_headers.items()}.get("mcp-session-id")
         if session:
             self.session_id = session
-        if status not in (200, 202):
-            raise RuntimeError(f"{method}: HTTP {status}: {data[:500]!r}")
-        response = _parse_body(status, resp_headers, data)
-        if response is not None and "error" in response:
-            raise RuntimeError(f"{method}: {response['error']}")
+        try:
+            response = _parse_body(status, resp_headers, data)
+        except ValueError:
+            response = None
         record = {"phase": method, "request_bytes": len(body), "response_bytes": len(data)}
         record.update(timing)
+        return status, response, record
+
+    def _send(self, method: str, params: Optional[dict] = None, notification: bool = False):
+        status, response, record = self._exchange(method, params, notification)
+        if response is not None and "error" in response:
+            raise RuntimeError(f"{method}: {response['error']}")
+        if status not in (200, 202):
+            raise RuntimeError(f"{method}: HTTP {status}")
         return (response or {}).get("result"), record
 
     def close(self):
@@ -163,6 +215,29 @@ class MCPClient:
         record.update(_server_times(result.get("_meta", {}).get("sebs", {})))
         _, notify_record = self._send("notifications/initialized", notification=True)
         return result, [record, notify_record]
+
+    def discover(self):
+        """server/discover at 2026-07-28. Returns (result or None if the server doesn't speak it, record)."""
+        self.modern, self.protocol_version = True, MODERN_PROTOCOL_VERSION
+        status, response, record = self._exchange("server/discover")
+        result = (response or {}).get("result")
+        if status == 200 and result and MODERN_PROTOCOL_VERSION in result.get("supportedVersions", []):
+            record.update(_server_times(result.get("_meta", {}).get("sebs", {})))
+            return result, record
+        self.modern, self.protocol_version = False, None
+        record["error"] = (response or {}).get("error", {}).get("code", status)
+        return None, record
+
+    def connect(self):
+        """Start a session as the chosen protocol does; returns the records of its requests."""
+        if self.protocol == "legacy":
+            return self.initialize()[1]
+        if self.protocol == "modern":
+            return []
+        result, record = self.discover()
+        if result is not None:
+            return [record]
+        return [record] + self.initialize()[1]  # the server only speaks the handshake revisions
 
     def list_tools(self):
         result, record = self._send("tools/list")
@@ -179,10 +254,10 @@ class MCPClient:
 
 
 def run_mcp(url: str, arguments: dict, calls: int, fresh_connection: bool, tool: Optional[str],
-            interval: float = 0.0):
-    client = MCPClient(url, fresh_connection)
+            interval: float = 0.0, protocol: str = "legacy"):
+    client = MCPClient(url, fresh_connection, protocol)
     try:
-        _, records = client.initialize()
+        records = client.connect()
         tools, record = client.list_tools()
         records.append(record)
         name = tool or tools[0]["name"]
@@ -248,6 +323,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--url", required=True, help="Function URL (the /mcp route on local)")
     parser.add_argument("--mode", choices=["mcp", "plain"], default="mcp")
+    parser.add_argument("--protocol", choices=PROTOCOLS, default="legacy",
+                        help="MCP revision: legacy (handshake), modern (2026-07-28), auto (discover, else handshake)")
     parser.add_argument("--arguments", default="{}", help="Tool arguments / benchmark input (JSON)")
     parser.add_argument("--tool", help="Tool name; defaults to the first tool listed")
     parser.add_argument("--calls", type=int, default=10, help="Tool calls per session")
@@ -258,11 +335,16 @@ def main(argv=None):
     parser.add_argument("--meta", default="{}",
                         help="JSON object merged into every output record (experiment labels)")
     parser.add_argument("--output", help="Write per-request records as JSON lines")
+    parser.add_argument("--trace-header", action="store_true",
+                        help="Send a fresh X-Cloud-Trace-Context per request and record it as trace_id (GCP)")
     args = parser.parse_args(argv)
 
     arguments = json.loads(args.arguments)
+    if args.trace_header:
+        Connection.send_trace = True
     if args.mode == "mcp":
-        records = run_mcp(args.url, arguments, args.calls, args.fresh_connection, args.tool, args.interval)
+        records = run_mcp(args.url, arguments, args.calls, args.fresh_connection, args.tool, args.interval,
+                          args.protocol)
     else:
         records = run_plain(args.url, arguments, args.calls, args.fresh_connection, args.interval)
     labels = json.loads(args.meta)
