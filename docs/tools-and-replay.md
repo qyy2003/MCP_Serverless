@@ -97,7 +97,7 @@ So tool calls and LLM generation are almost strictly sequential, and every tool 
 ## Tests
 
 ```bash
-scripts/sebs-patch.sh apply
+make setup
 python3 -m unittest tests.test_mcp_e2e tests.test_mcp_tools tests.test_replay     # 20 tests
 ```
 

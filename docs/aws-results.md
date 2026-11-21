@@ -38,7 +38,7 @@ All generated tables: [aws-tables-2026-11-18.md](aws-tables-2026-11-18.md). Raw 
 
 | | |
 |---|---|
-| Platform | AWS Lambda, eu-north-1 (the only region the account's organization policy allows), Python 3.11, x86_64, zip packages built by SeBS with our patch |
+| Platform | AWS Lambda, eu-north-1 (the only region the account's organization policy allows), Python 3.11, x86_64, zip packages built by SeBS with our MCP changes |
 | Trigger | Lambda Function URLs (no API Gateway); the same URL serves MCP and plain invocations |
 | Memory sizes | 128 MB (SeBS default, ~1/14 vCPU), 512 MB, 1769 MB (1 full vCPU) |
 | Tools | `010.sleep` with 0 s (no-op), `110.dynamic-html` (light compute, imports jinja2), `610.api-proxy` (REST API wrapper), `620.fetch-markdown` (fetch a page, convert to markdown) |

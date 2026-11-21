@@ -1,6 +1,6 @@
-"""End-to-end: the patched SeBS AWS wrapper serves benchmarks over MCP and plain HTTP.
+"""End-to-end: our SeBS AWS wrapper serves benchmarks over MCP and plain HTTP.
 
-Requires the SeBS patch to be applied (scripts/sebs-patch.sh apply).
+Requires the SeBS submodule checked out (make setup).
 
     python -m unittest tests.test_mcp_e2e
 """

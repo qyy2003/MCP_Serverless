@@ -1,6 +1,6 @@
 """End-to-end: the 600.mcp tool benchmarks served over MCP, calling the mock upstream.
 
-Requires the SeBS patch to be applied (scripts/sebs-patch.sh apply).
+Requires the SeBS submodule checked out (make setup).
 
     python -m unittest tests.test_mcp_tools
 """

@@ -1,6 +1,6 @@
 """Trace conversion and replay against tools behind fake Function URLs.
 
-Requires the SeBS patch to be applied (scripts/sebs-patch.sh apply).
+Requires the SeBS submodule checked out (make setup).
 
     python -m unittest tests.test_replay
 """

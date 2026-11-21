@@ -165,7 +165,7 @@ Needs Python 3.10+ and git. No packages to install: our code and the tests use o
 
 ```bash
 git clone --recurse-submodules <this repo> && cd MCP_Serverless
-make setup      # init the SeBS submodule and apply our patch to it
+make setup      # check out the SeBS submodule (our fork, branch mcp)
 make test       # 20 tests, about 3 s, no cloud account or Docker
 make dry-run    # modeled timeline of the agent trace, calls nothing
 ```
@@ -174,10 +174,10 @@ make dry-run    # modeled timeline of the agent trace, calls nothing
 
 ```
 README.md                         this file
-Makefile                          setup / test / dry-run / census / patch-export
+Makefile                          setup / test / dry-run / census / sebs-status
 docs/
   background.md                   original proposal and scope decision
-  mcp-wrapper.md                  milestone 1: the wrapper, the SeBS patch workflow, the client
+  mcp-wrapper.md                  milestone 1: the wrapper, what it changes in SeBS, the client
   server-census.md                what the MCP benchmarks exercise; which tool classes to build
   tools-and-replay.md             milestone 2: tool benchmarks, mock upstream, trace replay, first observations
   aws-results.md                  milestone 3: the first AWS Lambda campaign, findings and figures
@@ -197,44 +197,55 @@ data/
   traces/                         replay trace: 95 sessions, 814 tool calls
 analysis/server_census.py         regenerates data/server-census/summary.md
 analysis/aws_results.py           tables and figures of an AWS campaign (needs pandas, matplotlib)
-serverless-benchmarks/            SeBS submodule from the fork anveba/serverless-benchmarks, pinned to 089e5c6c
-patches/serverless-benchmarks.patch   all our changes to SeBS (15 files)
-scripts/sebs-patch.sh             apply / export / revert / status of that patch
+serverless-benchmarks/            SeBS submodule: fork anveba/serverless-benchmarks, branch `mcp` (our SeBS changes)
 tests/                            end-to-end tests; fake_lambda.py runs the real AWS wrapper locally
 ```
 
 Read the docs in this order: `mcp-wrapper.md`, `server-census.md`, `tools-and-replay.md`, `aws-results.md`.
 
-## The one thing to know: SeBS changes live in a patch
+## Changing SeBS: our changes are commits on the fork's `mcp` branch
 
-We never commit inside `serverless-benchmarks/`. The submodule comes from the fork
-[anveba/serverless-benchmarks](https://github.com/anveba/serverless-benchmarks) and stays on its pinned commit
-(`089e5c6c`, the fork's `master`, identical to SPCL's upstream at that commit);
-our changes to it are stored in `patches/serverless-benchmarks.patch`.
+`serverless-benchmarks/` is a git submodule pointing at the fork
+[anveba/serverless-benchmarks](https://github.com/anveba/serverless-benchmarks), branch **`mcp`**.
+That branch is SPCL's upstream `master` (`089e5c6c`) plus our two commits:
+
+- `3400a020` Serve benchmarks as MCP tools (the shim, AWS handler, local server, packaging)
+- `3477c5d1` Add MCP tool benchmarks 610.api-proxy and 620.fetch-markdown
+
+The branch has an open pull request on the fork (anveba/serverless-benchmarks#2).
+This repository records which commit of the fork it uses, like any submodule.
+
+To change SeBS:
 
 ```bash
-scripts/sebs-patch.sh apply      # after cloning (make setup does this)
-# ... edit files under serverless-benchmarks/ ...
-scripts/sebs-patch.sh export     # or: make patch-export; then commit the patch file
-scripts/sebs-patch.sh status     # applied / not applied / diverged
+cd serverless-benchmarks
+git checkout mcp                 # a fresh submodule checkout is on a detached HEAD
+# ... edit, then:
+git commit -am "..." && git push origin mcp        # needs push access to the fork
+cd .. && git add serverless-benchmarks && git commit -m "Update SeBS"   # record the new commit here
 ```
 
-`.gitmodules` sets `ignore = dirty`, so `git status` here will **not** show edits inside the
-submodule. If you edit SeBS files and forget `export`, the changes exist only on your disk.
+Forgetting the last step leaves this repository on the old SeBS commit.
+`make sebs-status` shows uncommitted or unpushed changes in the submodule.
+After someone else updated SeBS, `git pull && git submodule update` brings your checkout along.
 
-Inside SeBS, our additions are:
+Our additions inside SeBS:
 
 - `benchmarks/wrappers/mcp/python/mcp_shim.py`: the MCP server
-- `benchmarks/600.mcp/610.api-proxy`, `benchmarks/600.mcp/620.fetch-markdown`: the tool benchmarks
+- `benchmarks/600.mcp/610.api-proxy`, `benchmarks/600.mcp/620.fetch-markdown`: the tool benchmarks (each with a README)
 - `mcp.json` in `010.sleep` and `110.dynamic-html`: tool definitions for existing benchmarks
 - small edits to the AWS handler, the local server, `configs/systems.json`, `sebs/benchmark.py`
+
+*History:* until 2026-11-21 these changes were kept as a patch file (`patches/serverless-benchmarks.patch`)
+applied to an unmodified submodule. They moved to the fork so they can go upstream as a pull request;
+the patch and its script were removed, and the git history has them.
 
 ## Running on AWS
 
 This is the setup the 2026-11-18 campaign used.
 
 1. **SeBS:** `cd serverless-benchmarks && python3 -m venv python-venv && uv pip install --python python-venv/bin/python -e . matplotlib`
-   (an editable install, so `sebs` runs our patched tree). Run `sebs` from inside `serverless-benchmarks/`.
+   (an editable install, so `sebs` runs the fork's `mcp` branch). Run `sebs` from inside `serverless-benchmarks/`.
 2. **Credentials:** `export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...`. SeBS accepts only an access key and secret
    (no session tokens). The current account's organization policy allows only **eu-north-1**.
 3. **Mock upstream:** an EC2 VM in the same region with port 8080 open, running `python3 -m mcp_bench.mock_upstream --port 8080`
@@ -246,6 +257,34 @@ This is the setup the 2026-11-18 campaign used.
 
 `results/` is git-ignored. Resources the campaign leaves in the account: the four functions and their public URLs,
 the S3 bucket `sebs-benchmarks-<id>`, the IAM role `sebs-lambda-role`, the VM, its Elastic IP, security group and key pair.
+
+## Handing over: what you need to know
+
+**Start here:** `make setup && make test` (3 s, no accounts needed), then read this README's results,
+then the docs in order. Everything except the AWS runs works on a laptop with only Python and git.
+
+**AWS account state (checked 2026-11-21).** The first campaign's resources still exist, paused:
+
+| Resource | State |
+|---|---|
+| 4 Lambda functions `sebs_f0dc1354_{010,110,610,620}_python_3_11_x64` (512 MB, public Function URLs) | throttled: reserved concurrency 0, so the URLs return HTTP 429 |
+| EC2 VM (t3.small) running the mock upstream as systemd unit `mock-upstream` on :8080 | stopped (not terminated); starts the mock on boot |
+| Elastic IP, security group (SSH from one ETH address only, 8080 open), key pair `mcp-bench` | exist; the Elastic IP costs money while the VM is stopped |
+| S3 bucket `sebs-benchmarks-f0dc1354`, IAM role `sebs-lambda-role` | exist |
+
+Idle cost is about $4–5 per month, mostly the Elastic IP. The function URLs live in `serverless-benchmarks/cache/aws.json`
+and `configs/replay.aws.json`, both git-ignored. Neither the AWS keys nor the VM's SSH key are in this repository;
+ask the project owner for access to the account, or deploy into your own (steps above).
+
+- **To resume:** start the VM, then remove the throttle on each function (`aws lambda delete-function-concurrency
+  --function-name <name> --region eu-north-1`). `experiments/aws_campaign.py` does not lift it itself.
+  If the SSH security group rule doesn't match your IP, add yours.
+- **To tear down when done:** delete the functions (and their URLs), the bucket, the role, the VM, the Elastic IP,
+  the security group and the key pair. The functions are public endpoints, so don't leave them unthrottled.
+
+**Conventions.** Our code uses only the Python standard library (the AWS tooling needs boto3, the analysis pandas
+and matplotlib). Measurements are in microseconds in records (`*_us`). Raw results go in `results/` (git-ignored);
+write-ups and figures go in `docs/`.
 
 ## After that
 

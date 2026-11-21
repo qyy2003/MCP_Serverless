@@ -9,9 +9,7 @@ that SeBS already invokes, so we can measure what MCP adds on serverless
 The files of this milestone; the README has the full repository map.
 
 ```
-serverless-benchmarks/            SeBS submodule (fork anveba/serverless-benchmarks), pinned commit (never committed to)
-patches/serverless-benchmarks.patch   all our changes to SeBS
-scripts/sebs-patch.sh             apply / export / revert / status of the patch
+serverless-benchmarks/            SeBS submodule: fork anveba/serverless-benchmarks, branch `mcp`
 mcp_bench/client.py               MCP client + timing driver (stdlib only)
 tests/fake_lambda.py              runs the real AWS wrapper behind a fake Function URL
 tests/test_mcp_e2e.py             end-to-end tests
@@ -19,18 +17,9 @@ tests/test_mcp_e2e.py             end-to-end tests
 
 ## Working on the SeBS changes
 
-```bash
-git submodule update --init
-scripts/sebs-patch.sh apply      # patch the submodule's working tree
-# ... edit files in serverless-benchmarks/ ...
-scripts/sebs-patch.sh export     # write them back to patches/serverless-benchmarks.patch
-git add patches/ && git commit
-```
+Our SeBS changes are commits on the `mcp` branch of the fork; see "Changing SeBS" in the README for the workflow.
 
-`.gitmodules` sets `ignore = dirty`, so the patched submodule tree does not show
-up as a change in this repository; only the patch file does.
-
-## What the patch changes in SeBS
+## What we change in SeBS
 
 | File | Change |
 |---|---|
@@ -61,7 +50,7 @@ Per request the driver records `connect_us`, `ttfb_us`, `client_us`, a timestamp
 ## Tests
 
 ```bash
-scripts/sebs-patch.sh apply
+make setup
 python3 -m unittest tests.test_mcp_e2e
 ```
 
