@@ -84,16 +84,9 @@ Cloud Run logs joined for the 6 gen2 functions.
 2. **Natural cold starts at 512 MB / 0.333 vCPU, boost on** (first request, i.e. time to first result for calls ≤ 1):
    no-op 0.79–1.0 s, `110` 0.84–1.23 s, `610`/`620` handshake 0.72–1.10 s; **SDK variants 3.1–6.1 s**
    (610 SDK 5.4–6.1 s, 620 SDK 3.1–5.4 s). Consistent with E2 (512 MB, boost on: 0.8–1.4 s; SDK 3.4–4.6 s).
-3. **gen1: SeBS's forced cold start is faster than the natural one, not slower** (corrected 2026-11-23).
-   Natural, after ≥ 16 min idle (VM): 756–969 ms in 5 of 6 probes, one 2,230 ms; median 919 ms.
-   Forced the SeBS way (env-var update → new version → wait for ACTIVE → request at once;
-   `experiments/gcp_forced_cold.py`, `results/idle/gcp1-forced/`): 14 of 14 cold (fresh process), first request
-   **172–353 ms from the VM (n = 10, median 298 ms)** and 241–396 ms from the workstation (n = 4, median 377 ms).
-   So a forced cold start skips ~0.6 s of what a natural one pays, most likely because gen1, like Cloud Run, starts
-   an instance for a new version before the first request (the process is new, the sandbox already booted; gen1
-   has no instance-start logs to confirm it). The earlier "2.1–2.5 s forced" (SeBS `perf-cost`, 2026-11-22, scratch
-   run, no raw records kept) did not reproduce, from either client; its cause is unknown (SeBS's own client or
-   timing are candidates). gen2: forced ≈ natural (~1 s), as found before.
+3. **gen1, forced vs natural cold starts: inconclusive, not used.** Two runs of SeBS-style forced cold starts gave
+   contradictory results (2.1–2.5 s on 2026-11-22, scratch run without raw records; 0.17–0.4 s on 2026-11-23,
+   `results/idle/gcp1-forced/`), against ~0.9 s natural. Not reported anywhere until it is understood.
 4. **Consequence for agents:** a tool called less often than every 15 min pays a cold start on every call;
    above that, never (at concurrency 1 with one client). On GCP at 0.333 vCPU that is ~1 s for a light tool
    and 3–6 s with the official SDK.

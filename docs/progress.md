@@ -31,6 +31,8 @@ First request 172–353 ms from the VM (n = 10, median 298), 241–396 ms from t
 vs 756–969 ms natural (median 919, n = 6). **Reverses the 2026-11-22 note:** SeBS's forced cold start on gen1
 *understates* the natural one ~3×; the earlier 2.1–2.5 s (SeBS `perf-cost`, scratch, no raw records) did not
 reproduce from either client, cause unknown. The second call went to another, cold instance in 1 of 14 reps.
+**Decision (with the user): the forced-vs-natural comparison is not used or mentioned in the presentation;** two
+runs contradict each other, so neither direction is trustworthy.
 Client VM started for this (new IP 35.233.108.209) and stopped afterwards.
 
 **Presentation** ([presentation-outline.md](presentation-outline.md), draft 2): results sorted into new and
@@ -63,7 +65,7 @@ Both variants (`default`: SeBS shim + pandas, 150 MB installed; `sdk`: official 
 
 **Idle-time run, GCP** (14:51–18:32 UTC, 91 probes, 0 errors; [idle-experiment.md](idle-experiment.md#results-gcp-2026-11-22)):
 all 49 probes after ≤ 15 min idle warm, all 42 after ≥ 16 min cold, on gen1 and gen2 alike; every gen2 cold probe
-started its own instance. gen1 natural cold start ~0.9 s vs SeBS's forced 2.1–2.5 s (corrected 2026-11-23: forced is ~0.3 s, see above). Client VM stopped afterwards (2026-11-22 ~22:00 UTC).
+started its own instance. gen1 natural cold start ~0.9 s vs SeBS's forced 2.1–2.5 s (contradicted by the 2026-11-23 rerun; not used, see above). Client VM stopped afterwards (2026-11-22 ~22:00 UTC).
 
 Also: the gap figures' group "MCP tools, stdlib (ours)" is now "MCP tools, without SDK (ours)", since 630's default
 variant isn't stdlib-only.

@@ -13,7 +13,7 @@ Three kinds of result:
 |---|---|---|
 | **A. New and specific to MCP or agents** | MCP layer for SeBS; session/handshake cost; handshake × per-request billing granularity and the 2026-07-28 revision; census and gap; real-server startup; agent-trace replay (critical path, sparse use) | the core: slides 4–9 |
 | **B. Motivated by MCP, generic as functions** | 610/620/630 are a proxy, a fetch-and-convert and a heavy import; "billing pays for waiting"; dependency size → cold start | as what our benchmarks reproduce, with the census as the reason (slides 6, 10–11) |
-| **C. Generic platform behaviour / SeBS upkeep** | cold start vs tier, Lambda vs GCP; idle eviction edge; GCP startup CPU boost; 0.083 vCPU throttling; Lambda bills init; gen1 hang; forced vs natural cold starts (forced understates gen1 ~3×); Cloud Run pre-starting instances | only as consequences for MCP tools (slide 10), the SeBS slide (12), or backup |
+| **C. Generic platform behaviour / SeBS upkeep** | cold start vs tier, Lambda vs GCP; idle eviction edge; GCP startup CPU boost; 0.083 vCPU throttling; Lambda bills init; gen1 hang; Cloud Run pre-starting instances | only as consequences for MCP tools (slide 10), the SeBS slide (12), or backup |
 
 **Rule for every slide:** a kind-C number appears only as "what this means for an MCP tool", e.g. "a tool used
 less often than every 15 min pays a 3–6 s cold start on every call with a realistic MCP stack", never as a platform
@@ -140,11 +140,6 @@ MCP tools on serverless: a SeBS extension for agent tool workloads. Names, cours
 - Contributed: MCP layer, 3 tool benchmarks with SDK variants, replay and idle drivers.
 - Fixed: GCP gen1 cold-start experiments hang forever (`versionId` string vs int); language variants overwrote the
   default function; local server timed only the import, not the call. Upstream PRs ⏳.
-- Methodology: SeBS forces a cold start by redeploying, but GCP starts an instance for the new version before the
-  first request. gen1 forced 172–353 ms (median 298 ms, n = 10, VM) vs natural after idling 756–969 ms (median
-  919 ms, n = 6): **SeBS's forced cold start understates gen1's natural one ~3×**. gen2 forced ≈ natural. On Cloud
-  Run our campaign filtered sessions by instance start reason for the same reason. ✅ ([idle-experiment.md](idle-experiment.md))
-
 ## 13. Next phase: the MCP-specific problems serverless hasn't been measured on
 
 - **Stateful sessions on stateless functions.** 30 of 108 servers keep state between calls (`Mcp-Session-Id`,
@@ -180,7 +175,6 @@ MCP tools on serverless: a SeBS extension for agent tool workloads. Names, cours
 1. ❌ AWS raw data, AWS idle run, SDK variant on AWS (teammate) → slides 7, 10.
 2. ❌ Slide 8 figure (GCP vs Lambda cost split of the replay) + ⏳ price-page check. Slide 8 carries the most
    MCP-specific result, so this comes before polish elsewhere.
-3. ✅ gen1 forced-vs-natural rerun (2026-11-23): forced understates natural ~3×; the earlier 2.1–2.5 s didn't reproduce.
-4. ✅ Diagrams and census chart (slides 2, 3, 4, 6). SVG sources next to the PNGs
+3. ✅ Diagrams and census chart (slides 2, 3, 4, 6). SVG sources next to the PNGs
    (render: `rsvg-convert -z 2 x.svg -o x.png`).
-5. Decisions 1–2 above.
+4. Decisions 1–2 above.
