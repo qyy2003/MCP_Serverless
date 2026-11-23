@@ -1,32 +1,39 @@
-# Presentation outline (draft 2, 2026-11-23)
+# Presentation outline (draft 3, 2026-11-23)
 
-One slide per heading; ~13 slides plus backup, about 20 minutes. Each slide: the message (one sentence, usable as
+Interim presentation, ~11 slides plus backup, about 20 minutes. Each slide: the message (one sentence, usable as
 the slide title), the evidence, the figure, and its status: ✅ exists, ⏳ running or pending, ❌ missing.
+Draft 2 (organised by kinds A/B/C, with a platform-behaviour section) is in git history (`a4cc181`).
 
-## Framing: what is new, and what only follows from it
+## What changed from draft 2, and why
 
-Not everything we measured is new or specific to MCP. SeBS already has `perf_cost` (cold vs warm, memory sweeps,
-cost), `eviction_model` (cold starts vs idle time) and a heavy-dependency benchmark (`411.image-recognition`).
-Three kinds of result:
+The supervisor's reply asked us to *characterise tool performance on serverless platforms, including the metrics
+we mentioned*. The proposal named three metrics: (1) how a tool call's time splits between startup, protocol overhead
+and compute, (2) how cold and warm starts differ *in practice*, (3) whether costs are predictable. Draft 3 uses
+those three as the questions (our internal Q2, the LLM/tool overlap, becomes a fact about the workload) and drops
+the section on platform behaviour.
 
-| Kind | What | Where in the talk |
+**The lens.** An MCP tool on serverless differs from a generic function in three traits. Every result slide
+says which trait drives it:
+
+| Trait | What it is | Evidence that it's real |
 |---|---|---|
-| **A. New and specific to MCP or agents** | MCP layer for SeBS; session/handshake cost; handshake × per-request billing granularity and the 2026-07-28 revision; census and gap; real-server startup; agent-trace replay (critical path, sparse use) | the core: slides 4–9 |
-| **B. Motivated by MCP, generic as functions** | 610/620/630 are a proxy, a fetch-and-convert and a heavy import; "billing pays for waiting"; dependency size → cold start | as what our benchmarks reproduce, with the census as the reason (slides 6, 10–11) |
-| **C. Generic platform behaviour / SeBS upkeep** | cold start vs tier, Lambda vs GCP; idle eviction edge; GCP startup CPU boost; 0.083 vCPU throttling; Lambda bills init; gen1 hang; Cloud Run pre-starting instances | only as consequences for MCP tools (slide 10), the SeBS slide (12), or backup |
+| **Protocol** | A tool is used through a session: handshake requests before the first call, several requests per session, optionally session state (`Mcp-Session-Id`) | MCP spec; 30 of 108 census servers keep state |
+| **Stack** | Real servers ship the MCP SDK and its dependencies: heavy, CPU-bound startup for little work per call | 27 real servers: median 547 ms init, 96 dependencies |
+| **Traffic** | Calls come from an agent: sequential, on its critical path, bursty within a session, sparse between sessions | LiveMCPBench trace: 2 of 810 turns overlap; tools busy 3–5% of a session |
 
-**Rule for every slide:** a kind-C number appears only as "what this means for an MCP tool", e.g. "a tool used
-less often than every 15 min pays a 3–6 s cold start on every call with a realistic MCP stack", never as a platform
-fact on its own. The story is a chain: MCP tools have the traits the supervisor named (short, bursty, I/O-heavy,
-large dependencies; slides 4–5, 9) → our benchmarks reproduce them (6) → what the platforms do to such workloads
-(7–8, 10–11).
+**Rule for every slide:** would this result be different if the function weren't an MCP tool, or the load
+weren't an agent? If not, it goes to backup. Platform facts (eviction edge, CPU tiers, startup boost, forced
+cold starts) are SeBS's own territory (`perf_cost`, `eviction_model`) and appear at most as one line of context.
 
 ## Open decisions
 
-1. **Azure.** MCP routing exists, nothing deployed. Suggestion: two clouds measured carefully for the interim,
-   Azure as next step, unless the supervisor insists.
-2. **Split of the talk.** Natural split: motivation/census/gap/benchmarks/AWS (teammate), session cost/billing/
-   cold starts/next phase (us), or by part.
+1. **Azure.** MCP routing exists, nothing deployed. Suggestion: two clouds for the interim, Azure as the first
+   post-interim campaign, designed from the three questions (slide 10), not as a copy of the AWS/GCP campaigns.
+2. **Split of the talk** between the two of us. Natural split: slides 2–5 and 7 (teammate: census, benchmarks,
+   AWS, trace) and slides 6, 8–10 (us), or by part.
+3. **Real servers on serverless.** The proposal promised "running existing MCP server sets on serverless
+   deployments". Suggestion: synthetic tools stay the benchmark, real servers calibrate them (slide 4), and 2–3
+   real servers deployed to one cloud as a check after the interim (slide 10). Agree this with the teammate.
 
 ---
 
@@ -34,148 +41,156 @@ large dependencies; slides 4–5, 9) → our benchmarks reproduce them (6) → w
 
 MCP tools on serverless: a SeBS extension for agent tool workloads. Names, course, supervisor.
 
-## 2. Agents call tools, and providers want those tools on serverless
+## 2. Agents call tools, providers put those tools on serverless, and nobody measures it
 
 - Agent loop: LLM → tool call (MCP) → result → LLM. The agent waits for every tool call.
 - AWS (Lambda, AgentCore Gateway), Cloudflare (`createMcpHandler`), Vercel (`mcp-handler`), Azure (Functions MCP
-  extension) all recommend serverless for MCP servers.
-- Nobody measures the infrastructure: MCP-Bench, MCP-Universe and LiveMCPBench score the LLM; SeBS doesn't speak MCP.
-- Questions: Q1 where does a tool call's time go; Q2 does it overlap with LLM time; Q3 how large and how frequent are
-  cold starts; Q4 does billing fit this workload.
-- Figure: `figures/diagrams/agent-mcp.png` ✅. Its bottom row previews the results; crop it here and reuse the
-  full figure as the summary slide if the numbers come too early.
+  extension) all offer serverless hosting for MCP servers.
+- MCP-Bench, MCP-Universe and LiveMCPBench score the LLM, not the infrastructure; SeBS doesn't speak MCP and
+  has no agent workload.
+- **Three questions** (from the proposal, as the supervisor scoped it): where does a tool call's time go; how do
+  cold starts play out under agent traffic; is the bill predictable.
+- **Three traits** that make an MCP tool different from a generic function: protocol, stack, traffic (table above).
+  These are the reason the questions need new benchmarks.
+- Figure: `figures/diagrams/agent-mcp.png` ✅ (crop the results row if it gives numbers away too early).
 
-## 3. Approach: find out what MCP tools are, then extend SeBS to measure them
+## 3. What MCP tools are: census of 108 servers, 822 tools
 
-- Census of real servers → tool classes → benchmarks → AWS + GCP → agent-trace replay; real-server check feeds back.
-- Same function served over MCP and as a plain invocation → the difference is MCP's cost.
-- Figure: `figures/diagrams/pipeline.png` ✅.
-
-### Part I: what MCP tools are (kind A)
-
-## 4. What MCP tools actually do (census of 108 servers, 822 tools)
-
-- 49% wrap a remote API; 57% spend most of their time waiting on the network.
-- Search/fetch 26–29% of task references (MCP-Bench, MCP-Universe); browsers 13% in MCP-Universe.
-- **30 of 108 keep state between calls** (persistent or per session): set up here, comes back on slide 13.
-- 37 have notable startup cost; 100 of 108 need no API key, none uses a database (benchmark bias: real deployments
-  are the opposite).
+- 49% wrap a remote API; 57% spend most of their time waiting on the network. → the wait-dominated regime.
+- **30 of 108 keep state between calls** (protocol trait; comes back on slide 10).
+- ~8 tools per server on average (822 / 108) → how to package them (one function per server or per tool) is an
+  open choice (slide 10).
+- 37 have notable startup cost (stack trait).
+- Benchmark bias, said plainly: 100 of 108 need no API key, none uses a database.
 - Source: [server-census.md](server-census.md). Figure: `figures/census/classes-by-cost.png` ✅.
 
-## 5. The gap: SeBS's benchmarks don't look like MCP tools
+## 4. The gap: SeBS's benchmarks don't look like MCP tools
 
-- **They wait:** MCP tools spend 96–100% of a call waiting; SeBS benchmarks ≤ 22% (except `010.sleep` and `120.uploader`).
-  Caveat on the slide: our tools' wait share comes from the mock latency we set.
-- **Real servers are heavy to start:** 27 real servers, median 42 MB installed, 96 dependencies, 547 ms to initialise at
-  1 vCPU, CPU-bound in 26 of 27. SeBS's benchmarks: median 10 MB, 114 ms.
-- A stdlib mock (0.03 MB, 1 ms) would understate cold starts ~100×; our SDK variant (41 MB, 460 ms) sits at the median.
-- Say it plainly: heavy imports aren't new to SeBS (411 has PyTorch); what's new is that *the typical MCP tool* is
-  wait-dominated *and* heavy to start, a combination no SeBS benchmark has.
-- Figures: `figures/real-servers/size-vs-init.png` ✅, `figures/local/gap-wait.png` ✅ (local; fine as a characterisation).
+- **Stack:** 27 real servers measured: median 42 MB, 96 dependencies, 547 ms to initialise at 1 vCPU, CPU-bound in
+  26 of 27. SeBS: median 10 MB, 114 ms. Even a calculator server takes 0.3–0.5 s, because of the SDK stack.
+- **Wait:** our MCP tools wait 96–100% of a call; SeBS benchmarks ≤ 22% (except `010.sleep`, `120.uploader`).
+  Caveat: our tools' wait share comes from the mock latency we set.
+- **Protocol:** no SeBS benchmark is invoked through a session.
+- Heavy imports aren't new to SeBS (411 has PyTorch); what's new is that *the typical MCP tool* is wait-dominated,
+  heavy to start *and* session-based.
+- Figures: `figures/real-servers/size-vs-init.png` ✅, `figures/local/gap-wait.png` ✅.
 
-### Part II: what we built (kind A + B)
+## 5. What we built: MCP in SeBS, and tools calibrated to the census
 
-## 6. MCP in SeBS, and benchmarks that reproduce the census classes
-
-- MCP layer: any SeBS benchmark served as an MCP tool from the same function (AWS, GCP, Azure, local); both MCP
-  revisions (with handshake, and 2026-07-28 without). New in SeBS.
-- `610.api-proxy` (API wrapper, 49%), `620.fetch-markdown` (search/fetch), `630.data-analysis` (heavy startup:
-  pandas + a dataset loaded once per instance). Mock upstream with set latency and size; SeBS input sizes and validation.
-- Each with a no-SDK and an official-SDK variant: SDK − shim = what a realistic MCP stack costs.
-- Honest about kind B: as functions these are simple; their value is that the census says they are the common case.
-- Drivers: agent-trace replay (LiveMCPBench, 95 sessions, 814 calls), idle-time probes.
+- MCP layer: any SeBS benchmark served as an MCP tool from the same function (AWS, GCP, Azure, local), so MCP vs
+  plain on the same deployment isolates MCP's cost. Both protocol revisions: with handshake, and 2026-07-28 without.
+- `610.api-proxy` (API wrapper), `620.fetch-markdown` (search/fetch), `630.data-analysis` (heavy startup), mock
+  upstream with set latency and size.
+- Each in a no-SDK and an official-SDK variant. The SDK variant sits at the real servers' median (41 MB, 460 ms),
+  so it's the realistic configuration; SDK − no-SDK = what the MCP stack costs.
+- Agent-trace replay driver (LiveMCPBench, 95 sessions, 814 calls), LLM time modeled.
 - Figure: `figures/diagrams/wrapper.png` ✅.
 
-### Part III: what is specific to MCP on serverless (kind A)
+## 6. Time split: MCP costs nothing per call, the session costs round trips
 
-## 7. Q1: MCP costs nothing per call; the session does
+*Trait: protocol.*
 
-- MCP vs plain, warm: within ±3 ms (AWS), ±0.8 ms (GCP).
-- A new session costs 3 round trips before the first call: 44–52 ms in-region, 182–262 ms over a WAN.
-- Platform path outside the function 10–20 ms on both clouds; API tool call = upstream latency + 13–20 ms.
-- Figures: `figures/aws/e1-session-setup.png` ✅; `figures/gcp/e3-time-split.png` ✅. A combined AWS+GCP figure ❌
-  (needs the AWS raw data from the teammate).
+- MCP vs plain, warm, same function: within ±3 ms (AWS), ±0.8 ms (GCP).
+- A new session costs 3 round trips before the first call: 44–52 ms in-region, 182–262 ms over a WAN. The
+  `notifications/initialized` round trip carries no response; a client that doesn't wait for its 202 saves one.
+- An API tool call = upstream latency + 13–20 ms on both clouds: the rest of the time is the upstream's.
+- → MCP's cost is per session, so it depends on how often agents open sessions, which the 2026-07-28 revision
+  removes (no handshake).
+- Figures: `figures/aws/e1-session-setup.png` ✅, `figures/gcp/e3-time-split.png` ✅. Combined AWS+GCP figure ❌
+  (needs the AWS raw data).
 
-## 8. Q4a: on per-request-rounded billing, the handshake is a quarter of the bill
+## 7. Agent traffic: tool calls are on the critical path, and tools are mostly idle
 
-- Cloud Run rounds each request up to 100 ms: each 2–6 ms handshake request is billed 100 ms → handshake 23–24% of the
-  replay's cost on GCP vs 8.8% on Lambda (1 ms rounding).
-- → MCP 2026-07-28 (no handshake) is a cost question, not only a latency one, on per-request-rounded platforms.
-- Our most MCP-specific result: protocol design × billing granularity. Give it its own slide.
-- Figure: GCP vs Lambda cost split of the replay ❌.
-- ⏳ verify Cloud Run prices and the 100 ms rule on the price page before the talk.
+*Trait: traffic.*
 
-## 9. Q2 + agent traffic: tool calls are on the critical path, and tools are mostly idle
-
-- In the recorded agent run, 2 of 810 tool-calling turns issue more than one call: tool and LLM time don't overlap.
-- Tools are busy 3–5% of a session's wall time (replay, both clouds); 18 concurrent sessions → 8 Lambda instances across 4 tools.
-- So agent traffic is sparse and bursty per tool: this is what makes cold starts (slide 10) matter.
+- In the recorded run, 2 of 810 tool-calling turns issue more than one call: tool time adds directly to the agent's
+  latency.
+- Within a session, calls to a tool class are seconds apart (p50 1.8 s, p90 9.1 s): instances stay warm.
+- Tools are busy 3–5% of a session's wall time (replay, both clouds). 18 concurrent sessions → 8 Lambda instances,
+  15 Cloud Run instances across 4 tools.
+- → Cold starts are decided by how often sessions arrive, not by what happens inside one (slide 8).
 - Caveat: one trace; LLM time modeled from token counts.
 - Figure: `figures/aws/e4-replay-cold-starts.png` ✅.
 
-### Part IV: what the platforms do to these traits (kind C, framed for MCP)
+## 8. Cold starts in practice: the MCP stack sets the cost, the session decides where it lands
 
-## 10. Q3: a realistic MCP tool used sparsely pays a multi-second cold start on every call
+*Traits: stack and protocol (traffic from slide 7).*
 
-- Size: light tool 0.25–1.5 s (Lambda), ~1 s (GCP, boost on); **official SDK 3.5–4.2 s, pandas 5–7 s on GCP**; the SDK
-  stack doesn't fit 128 MiB on GCP. Startup is CPU-bound (slide 5), so small tiers multiply it.
-- Rate: on GCP, ≤ 15 min idle always warm, ≥ 16 min always cold. With slide 9's sparse use, a tool called less often
-  than every 15 min pays the full cold start each time.
-- Say where it comes from: the eviction edge and tier scaling are platform behaviour SeBS can already measure
-  (`eviction_model`, `perf_cost`); what's ours is the MCP stack's size and the agent's call pattern.
-- Figures: `figures/gcp/e2-cold-start-boost.png` ✅, `figures/idle/idle-gcp-2026-11-22.png` ✅,
-  `figures/aws/e2-cold-start.png` ✅. ❌ SDK variant on AWS (teammate; one E2 run at 3 memory sizes); ⏳ AWS idle curve (teammate).
+- **The stack makes it seconds.** On GCP at 1 vCPU, the official SDK variant's cold start is 3.5–4.2 s (import alone
+  2.2–2.7 s), the no-SDK tool ~1.3–1.7 s; SDK + pandas (`630`) 7.3 s import. The SDK stack doesn't fit 128 MiB
+  (needs 134 MiB). ❌ SDK variant on AWS (teammate).
+- **The handshake takes the cold start**, but only the platform's part: on Lambda, init lands on `initialize`, the
+  tool's import on the first `tools/call` (SeBS imports lazily). A cold MCP session reaches its first result
+  25–75 ms later than a cold plain call.
+- **A session can hit several cold instances** (indicative, GCP, n = 2–3): after a cold start, later handshake
+  requests went to fresh instances, and the first result came after ~20 s instead of ~10 s. The protocol's
+  multi-request session meets the platform's per-request routing.
+- **Under replay**, at ≤ 60 s session arrivals few calls see a cold start. One line of context: past the platform's
+  idle limit (15 min measured on GCP) every session pays the full cold start; sparse arrivals not replayed yet.
+- Figures: `figures/gcp/e2-cold-start-boost.png` ✅ (SDK cells), `figures/aws/e2-cold-start.png` ✅.
+  ❌ A figure with no-SDK vs SDK vs SDK+pandas cold start per cloud would carry this slide better.
 
-## 11. Q4b: wall-clock billing charges MCP tools for waiting
+## 9. Cost: the protocol meets the billing model
 
-- 95–100% of an API tool's billed time is waiting; CPU-time billing would be 7–91× cheaper (Lambda, 128–1769 MB).
-- Memory size is a cost decision per tool: same latency at 128 MB and 1769 MB, 10× the price (API tool); the fetch
-  tool needs CPU (1 MB page: 1.5 s at 128 MB vs 0.3 s).
-- Known critique of serverless (kind B); new is that the census puts 57% of MCP tools in this regime.
-- Open: concurrency > 1 (Cloud Run's default 80) would let one instance absorb many waiting calls; not measured.
-- Figure: `figures/aws/e5-cost.png` ✅.
+*Traits: protocol and stack.*
 
-## 12. Back to SeBS: what we fixed and what we contribute
+- **Billing granularity punishes the handshake.** Cloud Run rounds each request up to 100 ms: a handshake request
+  does 2–6 ms of work and is billed 100 ms. In the replay, handshake requests are 30% of invocations and 23–24% of
+  the GCP bill, vs 8.8% on Lambda (1 ms rounding). → On per-request-rounded platforms the protocol revision
+  (2026-07-28, no handshake) is a cost decision, not only a latency one. Our most MCP-specific result.
+- **Predictable, but in steps.** An API tool's bill is its upstream latency + a few ms, so it can be predicted from
+  the upstream. With 100 ms rounding it moves in steps: a 207 ms call is billed 300 ms.
+- One line of context: 95–100% of a waiting tool's billed time is waiting (Lambda; a known serverless critique,
+  relevant because 57% of MCP servers are in that regime).
+- Figure: GCP vs Lambda cost split of the replay (handshake vs tool calls) ❌, **priority 1**.
+- ⏳ Verify Cloud Run prices and the 100 ms rule on the price page before the talk.
 
-- Contributed: MCP layer, 3 tool benchmarks with SDK variants, replay and idle drivers.
-- Fixed: GCP gen1 cold-start experiments hang forever (`versionId` string vs int); language variants overwrote the
-  default function; local server timed only the import, not the call. Upstream PRs ⏳.
+## 10. Next: the MCP-specific questions we haven't measured yet
 
-## 13. Next phase: the MCP-specific problems serverless hasn't been measured on
+This is the plan to the final presentation. Each item is MCP-specific by the rule above.
 
-- **Stateful sessions on stateless functions.** 30 of 108 servers keep state between calls (`Mcp-Session-Id`,
-  memory, browser). Serverless doesn't route a session's calls to one instance, and we already see it break up:
-  on GCP, one sequential client's requests spread over several instances after a cold start (plain 26 of 80 sessions,
-  MCP 2 of 75 at 512 MB). Measure how often affinity breaks and what it costs (state rebuild, wrong answers).
-- **One function per server or per tool.** A server exposes ~8 tools on average (822 tools, 108 servers; counts not known for all): packing shares cold starts but grows the
-  package; splitting does the opposite.
-- **Concurrency > 1 for waiting tools** (slide 11).
-- Azure, if not done by the interim; more traces with measured LLM time; browser and DB tools.
+| Experiment | Trait | Question | Builds on |
+|---|---|---|---|
+| **Stateful sessions on stateless functions**: how often a session's requests leave their instance, what that costs (state rebuild, wrong results) | protocol | time, cold | 30 of 108 stateful servers; slide 8's session spread |
+| **Protocol revision × billing model on three clouds**: handshake vs 2026-07-28, Lambda / Cloud Run / Azure Flex Consumption | protocol | cost | slide 9; shim and client already speak both revisions |
+| **One function per server vs per tool**: shared cold starts vs package size, under replay | stack, traffic | cold, cost | ~8 tools per server |
+| **Sparse agent traffic**: replay with session arrivals beyond the idle limit, with the SDK stack | traffic, stack | cold | slides 7–8 |
+| **Concurrency > 1 for waiting tools**: one instance absorbing many waiting calls (Cloud Run, Azure) | traffic | cost | 57% wait-dominated |
+| **Real servers deployed**: 2–3 census servers on one cloud, compared with our tools | stack | all | proposal; slide 4 |
 
-## 14. Limitations
+Also: more traces with measured LLM time; Azure as the third cloud, inside the experiments above.
 
-- One region and one day per cloud; one client VM; few clean cold sessions at the smallest GCP tier.
+## 11. Limitations
+
+- One region and one day per cloud; one client VM; few clean cold sessions in some GCP cells.
 - Mock upstream (plain HTTP, no TLS); one agent trace with modeled LLM time.
 - Real-server startup measured on a laptop at 1 CPU.
 - Cloud Run billing computed from published prices, not billing records.
-- Concurrency 1 on GCP (Lambda-like), gen2 with the startup CPU boost on (GCP's default).
+- GCP: gen2, concurrency 1 (Lambda-like), startup CPU boost on (GCP's default).
 
 ---
 
-## Backup slides (kind C detail, for questions)
+## Backup slides (for questions)
 
-- GCP startup CPU boost: at 0.083 vCPU ~10 s without, ~1 s with; nothing at 1 vCPU. Figure `figures/gcp/e2-cold-start-boost.png`.
-- 0.083 vCPU on Cloud Run: warm calls bimodal, ~11 ms or ~90 ms (CPU-quota throttling in 100 ms periods).
-- Lambda bills its init phase (billed = handler + init, all 319 cold invocations).
-- Idle-time curve in detail: 49/49 warm ≤ 15 min, 42/42 cold ≥ 16 min, gen1 and gen2.
-- Cloud Run pre-starts instances on every new revision; why the GCP campaign filters sessions by instance start reason.
-- Servers that fetch data at startup (12306: ~6 s); 3 of 13 real Python servers broken by MCP SDK 2.x.
+Platform behaviour we measured on the way. Not MCP-specific; SeBS's `perf_cost` and `eviction_model` cover it.
+
+- GCP startup CPU boost: at 0.083 vCPU ~10 s cold start without, ~1 s with; nothing at 1 vCPU.
+- GCP cold starts are 3–5× Lambda's at 1 vCPU (no-SDK tools: 1.3–1.7 s vs 0.25–0.53 s).
+- Idle-time curve: 49/49 warm ≤ 15 min idle, 42/42 cold ≥ 16 min (GCP, gen1 and gen2).
+- 0.083 vCPU on Cloud Run: warm calls bimodal, ~11 ms or ~90 ms (consistent with CPU-quota throttling).
+- Cloud Run pre-starts instances on every new revision, so SeBS's redeploy doesn't force a cold start there; why
+  the GCP campaign filters sessions by instance start reason.
+- Lambda bills its init phase (all 319 cold invocations).
+- Memory size as a cost decision: API tool same latency at 128 and 1769 MB, 10× the price; fetch tool needs CPU.
+- SeBS fixes: GCP gen1 cold-start hang (`versionId` string vs int); language variants overwrote the default
+  function; local server timed only the import. Upstream PRs ⏳.
+- Real servers: some fetch data at startup (12306: ~6 s); 3 of 13 Python servers broken by MCP SDK 2.x.
 
 ## To do for the slides, by priority
 
-1. ❌ AWS raw data, AWS idle run, SDK variant on AWS (teammate) → slides 7, 10.
-2. ❌ Slide 8 figure (GCP vs Lambda cost split of the replay) + ⏳ price-page check. Slide 8 carries the most
-   MCP-specific result, so this comes before polish elsewhere.
-3. ✅ Diagrams and census chart (slides 2, 3, 4, 6). SVG sources next to the PNGs
+1. ❌ Slide 9 figure (GCP vs Lambda cost split of the replay) + ⏳ price-page check.
+2. ❌ Slide 8 figure: cold start by stack (no-SDK / SDK / SDK+pandas), per cloud. Needs the SDK variant on AWS.
+3. ❌ AWS raw data from the teammate → combined figure on slide 6.
+4. Decisions 1–3 above.
+5. ✅ Diagrams and census chart (slides 2–5). SVG sources next to the PNGs
    (render: `rsvg-convert -z 2 x.svg -o x.png`).
-4. Decisions 1–2 above.
