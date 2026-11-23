@@ -140,6 +140,7 @@ MCP tools on serverless: a SeBS extension for agent tool workloads. Names, cours
 - Contributed: MCP layer, 3 tool benchmarks with SDK variants, replay and idle drivers.
 - Fixed: GCP gen1 cold-start experiments hang forever (`versionId` string vs int); language variants overwrote the
   default function; local server timed only the import, not the call. Upstream PRs ⏳.
+
 ## 13. Next phase: the MCP-specific problems serverless hasn't been measured on
 
 - **Stateful sessions on stateless functions.** 30 of 108 servers keep state between calls (`Mcp-Session-Id`,
