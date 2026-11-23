@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="1000" height="430" viewBox="0 0 1000 430" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="430" fill="#fcfcfb"/>
+
+  <!-- main row: what we know about real tools -> benchmarks -> measurements -> answers -->
+  <g font-size="12.5" fill="#52514e">
+    <!-- 1 census -->
+    <rect x="15" y="30" width="176" height="176" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+    <rect x="15" y="30" width="176" height="6" rx="3" fill="#2a78d6"/>
+    <text x="29" y="64" font-size="15" font-weight="bold" fill="#0b0b0b">1 Census</text>
+    <text x="29" y="92">108 MCP servers,</text>
+    <text x="29" y="110">822 tools from</text>
+    <text x="29" y="128">MCP-Bench,</text>
+    <text x="29" y="146">MCP-Universe,</text>
+    <text x="29" y="164">LiveMCPBench</text>
+
+    <!-- 2 classes -->
+    <rect x="212" y="30" width="176" height="176" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+    <rect x="212" y="30" width="176" height="6" rx="3" fill="#2a78d6"/>
+    <text x="226" y="64" font-size="15" font-weight="bold" fill="#0b0b0b">2 Tool classes</text>
+    <text x="226" y="92">API wrapper   49%</text>
+    <text x="226" y="110">local compute 22%</text>
+    <text x="226" y="128">search / fetch 12%</text>
+    <text x="226" y="146">57% mostly wait</text>
+    <text x="226" y="164">on the network</text>
+
+    <!-- 3 benchmarks -->
+    <rect x="409" y="30" width="176" height="176" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+    <rect x="409" y="30" width="176" height="6" rx="3" fill="#2a78d6"/>
+    <text x="423" y="64" font-size="15" font-weight="bold" fill="#0b0b0b">3 Benchmarks</text>
+    <text x="423" y="92">610.api-proxy</text>
+    <text x="423" y="110">620.fetch-markdown</text>
+    <text x="423" y="128">630.data-analysis</text>
+    <text x="423" y="146">each: no-SDK and</text>
+    <text x="423" y="164">official-SDK variant</text>
+    <text x="423" y="182">+ mock upstream</text>
+
+    <!-- 4 campaigns -->
+    <rect x="606" y="30" width="176" height="176" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+    <rect x="606" y="30" width="176" height="6" rx="3" fill="#2a78d6"/>
+    <text x="620" y="64" font-size="15" font-weight="bold" fill="#0b0b0b">4 Cloud runs</text>
+    <text x="620" y="92">AWS Lambda</text>
+    <text x="620" y="110">GCP Cloud Run (gen2)</text>
+    <text x="620" y="128" fill="#898781">Azure: next</text>
+    <text x="620" y="146">3 memory / CPU tiers,</text>
+    <text x="620" y="164">cold and warm,</text>
+    <text x="620" y="182">client in-region</text>
+
+    <!-- 5 answers -->
+    <rect x="803" y="30" width="182" height="176" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+    <rect x="803" y="30" width="182" height="6" rx="3" fill="#eb6834"/>
+    <text x="817" y="64" font-size="15" font-weight="bold" fill="#0b0b0b">5 Answers</text>
+    <text x="817" y="92">Q1 time split per call</text>
+    <text x="817" y="114">Q2 overlap with LLM</text>
+    <text x="817" y="136">Q3 cold starts:</text>
+    <text x="817" y="154">      size and rate</text>
+    <text x="817" y="176">Q4 billing fit</text>
+  </g>
+  <g stroke="#52514e" stroke-width="2" marker-end="url(#a)">
+    <line x1="192" y1="118" x2="209" y2="118"/>
+    <line x1="389" y1="118" x2="406" y2="118"/>
+    <line x1="586" y1="118" x2="603" y2="118"/>
+    <line x1="783" y1="118" x2="800" y2="118"/>
+  </g>
+
+  <!-- support row -->
+  <g font-size="12.5" fill="#52514e">
+    <rect x="15" y="262" width="373" height="124" rx="8" fill="#f3f2ee" stroke="#c3c2b7" stroke-width="1.2"/>
+    <text x="29" y="290" font-size="14" font-weight="bold" fill="#0b0b0b">Real-server check</text>
+    <text x="29" y="314">27 real servers installed and started at 1 CPU:</text>
+    <text x="29" y="332">median 42 MB, 96 dependencies, 547 ms to start.</text>
+    <text x="29" y="350">SeBS benchmarks: 10 MB, 114 ms. → the gap; why our</text>
+    <text x="29" y="368">tools ship the official SDK, and why 630 exists</text>
+
+    <rect x="409" y="262" width="176" height="124" rx="8" fill="#f3f2ee" stroke="#c3c2b7" stroke-width="1.2"/>
+    <text x="423" y="290" font-size="14" font-weight="bold" fill="#0b0b0b">MCP layer in SeBS</text>
+    <text x="423" y="314">any benchmark as an</text>
+    <text x="423" y="332">MCP tool, same function;</text>
+    <text x="423" y="350">AWS, GCP, Azure, local</text>
+
+    <rect x="606" y="262" width="379" height="124" rx="8" fill="#f3f2ee" stroke="#c3c2b7" stroke-width="1.2"/>
+    <text x="620" y="290" font-size="14" font-weight="bold" fill="#0b0b0b">Drivers</text>
+    <text x="620" y="314">single tool: MCP session vs plain call, cold vs warm</text>
+    <text x="620" y="332">agent-trace replay: 95 sessions, 814 calls</text>
+    <text x="620" y="350">idle-time probes: cold-start share vs minutes idle</text>
+  </g>
+  <g stroke="#52514e" stroke-width="2" marker-end="url(#a)">
+    <path d="M 300 260 V 236 H 470 V 210" fill="none"/>
+    <line x1="497" y1="260" x2="497" y2="210"/>
+    <line x1="694" y1="260" x2="694" y2="210"/>
+  </g>
+  <text x="15" y="418" font-size="12" fill="#898781">Top row: the pipeline. Bottom row: what feeds it: the realism check, the SeBS extension and the measurement drivers.</text>
+</svg>

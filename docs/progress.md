@@ -22,6 +22,26 @@ Newest first. Each entry: what was done → what came out of it. Details live in
 
 ## Log
 
+### 2026-11-23: gen1 forced vs natural cold starts rerun; presentation reframed; figures
+
+**gen1 forced cold starts, rerun from the VM** (`experiments/gcp_forced_cold.py`, `results/idle/gcp1-forced/`,
+09:16–09:31 UTC, `010.sleep` gen1 128 MB): forced exactly as SeBS does (config update with a new `cold_start` env var,
+wait for ACTIVE with the new version, request at once), probe = `run_plain` as in the idle run. 14/14 cold, 0 errors.
+First request 172–353 ms from the VM (n = 10, median 298), 241–396 ms from the workstation (n = 4, median 377),
+vs 756–969 ms natural (median 919, n = 6). **Reverses the 2026-11-22 note:** SeBS's forced cold start on gen1
+*understates* the natural one ~3×; the earlier 2.1–2.5 s (SeBS `perf-cost`, scratch, no raw records) did not
+reproduce from either client, cause unknown. The second call went to another, cold instance in 1 of 14 reps.
+Client VM started for this (new IP 35.233.108.209) and stopped afterwards.
+
+**Presentation** ([presentation-outline.md](presentation-outline.md), draft 2): results sorted into new and
+MCP-specific (A), MCP-motivated but generic (B), and generic platform behaviour / SeBS upkeep (C); kind-C results
+only appear as consequences for MCP tools or in backup. SeBS already has `eviction_model` and `perf_cost`, which
+cover the idle-time and tier experiments on the platform side. Next phase proposed: stateful MCP sessions on
+stateless functions (30 of 108 servers keep state).
+
+**Figures:** census chart (`analysis/census_figure.py` → `figures/census/classes-by-cost.png`) and three diagrams
+(`figures/diagrams/{agent-mcp,pipeline,wrapper}.{svg,png}`).
+
 ### 2026-11-22 (evening): heavy-startup benchmark 630.data-analysis; idle-time results (GCP)
 
 The real-server measurement showed a class our tools didn't cover: servers that are expensive to start (scientific
@@ -43,7 +63,7 @@ Both variants (`default`: SeBS shim + pandas, 150 MB installed; `sdk`: official 
 
 **Idle-time run, GCP** (14:51–18:32 UTC, 91 probes, 0 errors; [idle-experiment.md](idle-experiment.md#results-gcp-2026-11-22)):
 all 49 probes after ≤ 15 min idle warm, all 42 after ≥ 16 min cold, on gen1 and gen2 alike; every gen2 cold probe
-started its own instance. gen1 natural cold start ~0.9 s vs SeBS's forced 2.1–2.5 s. Client VM stopped afterwards (2026-11-22 ~22:00 UTC).
+started its own instance. gen1 natural cold start ~0.9 s vs SeBS's forced 2.1–2.5 s (corrected 2026-11-23: forced is ~0.3 s, see above). Client VM stopped afterwards (2026-11-22 ~22:00 UTC).
 
 Also: the gap figures' group "MCP tools, stdlib (ours)" is now "MCP tools, without SDK (ours)", since 630's default
 variant isn't stdlib-only.
