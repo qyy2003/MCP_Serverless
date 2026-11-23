@@ -12,15 +12,17 @@ sessions against deployed tools.
 | `mcp_bench/mock_upstream.py` | Mock REST API (`/api`) and web pages (`/page`). Each request sets the response delay and size, so upstream behavior is controlled and repeatable. |
 | SeBS `600.mcp/610.api-proxy` | **API-wrapper tool** (`search_products`): GET a JSON list from the upstream, filter and sort it, return the top items. Covers the largest census class. |
 | SeBS `600.mcp/620.fetch-markdown` | **Fetch tool** (`fetch`): GET an HTML page, strip boilerplate, convert it to markdown, return `max_length` characters with paging, like the reference fetch server. |
+| SeBS `600.mcp/630.data-analysis` | **Heavy-startup tool** (`summarize_catalog`, added 2026-11-22): imports pandas/numpy, fetches a dataset from the upstream once per instance and builds a DataFrame, then answers each call (group by month/tag/stock, price and rating statistics) from memory. The class real servers show and 610/620 lack (docs/real-servers.md): startup costs hundreds of ms to seconds, warm calls are cheap. Startup cost is set by the dataset: `test` 64 KB, `small` 1 MB after 200 ms, `large` 8 MB after 1 s. |
 | `mcp_bench/traces.py` | Converts recorded agent runs to replay traces. Currently reads LiveMCPBench baseline runs. |
 | `data/traces/livemcpbench-claude-sonnet-4.jsonl` | Trace derived from LiveMCPBench's Claude Sonnet 4 baseline run (Apache-2.0): 95 sessions, 905 LLM turns, 814 tool calls, each call mapped to its census class. |
 | `mcp_bench/replay.py` | Replays traces against MCP endpoints and reports latency, cold starts by idle gap, and the tool share of session time. `--dry-run` reports only the modeled timeline. |
 | `configs/replay.example.json` | Maps census classes to deployed tools and sets the LLM timing model. |
 
-Both tools use only the Python standard library (`http.client`, `html.parser`).
+610 and 620 use only the Python standard library (`http.client`, `html.parser`).
 That keeps package size and import time minimal, and makes them testable without installing anything.
 Real servers often use httpx/requests and BeautifulSoup/markdownify, which add import time to cold starts.
-That can become a SeBS language variant later.
+Each tool also has an `sdk` language variant built on the official MCP SDK (`mcp==2.3.0`), which real servers use.
+630 needs pandas and numpy in both variants (150 MB installed, 191 MB with the SDK); give it ≥ 512 MB.
 
 ## What the tools measure
 
@@ -31,7 +33,8 @@ Each tool returns SeBS's usual `{"result": ..., "measurement": ...}`; over MCP, 
 | `upstream_wait_us` | request sent → full response read. Includes the configured `latency_ms`; the rest is network + HTTP. |
 | `upstream_connect_us`, `upstream_new_connection` | TCP (+TLS) setup; 0 / false when a warm instance reuses its kept-alive connection |
 | `upstream_bytes` | upstream response size |
-| `process_us` | local work: JSON reshaping, or HTML → markdown (about 90 ms per MB of HTML) |
+| `process_us` | local work: JSON reshaping, or HTML → markdown (about 90 ms per MB of HTML), or 630's aggregation |
+| `loaded`, `load_us`, `parse_us`, `rows` | 630 only: whether this call loaded the dataset (an instance's first call), the time it took (fetch + DataFrame), and its parsing part. 0 / false on later calls |
 
 Together with the wrapper's `exec_us` and the client's `connect_us`/`ttfb_us`/`client_us`, a call splits into:
 client↔function network and protocol | cold start | upstream connect | upstream wait | local processing.
@@ -40,6 +43,10 @@ That is research question 1.
 The upstream connection is kept across warm invocations, as a real server's HTTP client would.
 A cold start therefore also pays for a new upstream connection.
 `reuse_connection: false` disables the reuse, to measure that cost.
+
+The mock upstream generates each (size, seed) body on its first request and caches it; at 8 MB that takes ~0.7 s,
+which would land in 630's `upstream_wait_us`. Request each dataset once (`curl '<upstream>/api?size=...&seed=1'`)
+after starting the mock and before measuring.
 
 ## Running
 

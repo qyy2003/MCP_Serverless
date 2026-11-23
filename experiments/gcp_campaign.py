@@ -53,6 +53,7 @@ Once:
 """
 
 import argparse
+import datetime as dt
 import datetime
 import http.client
 import secrets
@@ -77,6 +78,7 @@ TRACE = "data/traces/livemcpbench-claude-sonnet-4.jsonl"
 CODES = ["010", "110", "610", "620"]
 SDK_CODES = ["610s", "620s"]
 SDK_MIN_MEMORY_MB = 256
+MAX_INSTANCES = 20  # as SeBS deploys the functions; scale0 restores it
 # --e2-serial: where functions wait between their measurements (the SDK variants need >128 MiB)
 PARK = {"memory_mb": 128, "cpu": "0.083", "label": "park"}
 PARK_SDK = {"memory_mb": 512, "cpu": "0.333", "label": "park"}
@@ -150,7 +152,8 @@ class Campaign:
             json.dump({"start": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                        "functions": self.fns, "project": self.project, "region": REGION}, open(state, "w"), indent=2)
         self.state = json.load(open(state))
-        self.current = {}  # code -> {"memory_mb", "cpu", "boost"}
+        self.current = {}
+        self.revision = {}  # code -> (latest revision, when configure saw it ready)  # code -> {"memory_mb", "cpu", "boost"}
 
     def say(self, msg: str):
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
@@ -188,6 +191,12 @@ class Campaign:
         if tag:
             env = [e for e in container.get("env", []) if e["name"] != "cold_start"]
             container["env"] = env + [{"name": "cold_start", "value": tag}]
+        if svc.get("scaling", {}).get("scalingMode") == "MANUAL":
+            svc["scaling"] = {"scalingMode": "AUTOMATIC", "maxInstanceCount": MAX_INSTANCES}
+        if self.args.timeout:
+            # SeBS's timeouts (10 s for 110) cut off holds and slow cold starts; the timeout doesn't change
+            # how a request that finishes within it is served.
+            svc["template"]["timeout"] = f"{self.args.timeout}s"
         svc["template"].pop("revision", None)
         return self._request("PATCH", f"{RUN}/{self._service(code)}", json=svc)
 
@@ -221,8 +230,9 @@ class Campaign:
                 svc = self._request("GET", f"{RUN}/{self._service(code)}")
                 res = svc["template"]["containers"][0]["resources"]
                 cfg = {"memory_mb": memory_mb(res["limits"]["memory"]), "cpu": res["limits"]["cpu"],
-                       "boost": bool(res.get("startupCpuBoost"))}
+                       "boost": bool(res.get("startupCpuBoost")), "timeout": svc["template"].get("timeout")}
                 self.current[code] = cfg
+                self.revision[code] = (svc.get("latestReadyRevision", "").split("/")[-1], time.time())
                 self.configs_log.write(json.dumps(dict(cfg, ts=round(time.time(), 3), fn=code, cold_tag=tag,
                                                        revision=svc.get("latestReadyRevision", "").split("/")[-1])) + "\n")
         self.configs_log.flush()
@@ -244,16 +254,80 @@ class Campaign:
             finally:
                 conn.close()
 
+        # --holds > 1: at slow tiers a hold can queue while the rollout instance is still importing, and Cloud
+        # Run starts an extra instance for it, which is idle by the time the session starts. Several holds
+        # occupy every instance there is, so the session's first request has to start a new one.
+        counts = {}
         for code in codes:
-            trace_id = secrets.token_hex(16)
-            holds_log.write(json.dumps({"ts": round(time.time(), 3), "fn": code, "trace_id": trace_id,
-                                        "seconds": seconds}) + "\n")
-            threading.Thread(target=send, args=(code, trace_id), daemon=True).start()
+            # --holds 0: as many holds as instances Cloud Run has started for the revision (1 to 13 seen)
+            counts[code] = self.args.holds or min(max(1, self.started_instances(code)), self.args.max_holds) \
+                + self.args.spare_holds
+            for _ in range(counts[code]):
+                trace_id = secrets.token_hex(16)
+                holds_log.write(json.dumps({"ts": round(time.time(), 3), "fn": code, "trace_id": trace_id,
+                                            "seconds": seconds, "holds": counts[code]}) + "\n")
+                threading.Thread(target=send, args=(code, trace_id), daemon=True).start()
         holds_log.close()
-        time.sleep(3)  # let the holds reach the instances before the measured requests
+        time.sleep(self.args.hold_wait)  # let the holds reach the instances before the measured requests
+
+    def scale_to_zero(self, codes, restore=True):
+        """--cold scale0: stop every instance (service-level manual scaling to 0), then back to automatic scaling.
+        No new revision, so Cloud Run doesn't pre-start an instance: the next request starts one itself, as on
+        Lambda. (A new revision always gets a DEPLOYMENT_ROLLOUT instance; holding it doesn't work reliably.)"""
+        def scaling(body):
+            ops = [(code, self._request("PATCH", f"{RUN}/{self._service(code)}", params={"updateMask": "scaling"},
+                                        json={"scaling": body})) for code in codes]
+            for code, op in ops:
+                while not op.get("done"):
+                    time.sleep(1)
+                    op = self._request("GET", f"{RUN}/{op['name']}")
+                if "error" in op:
+                    raise RuntimeError(f"scaling {code} {body}: {op['error']}")
+        scaling({"scalingMode": "MANUAL", "manualInstanceCount": 0})
+        time.sleep(self.args.drain)  # instances shut down within ~8 s ("Shutting down user disabled instance")
+        if restore:
+            scaling({"scalingMode": "AUTOMATIC", "maxInstanceCount": MAX_INSTANCES})
+        with open(os.path.join(self.local_dir, "cycles.jsonl"), "a") as f:
+            f.write(json.dumps({"ts": round(time.time(), 3), "fns": codes}) + "\n")
+
+    def cold(self, codes, **configure):
+        """Make the next request to each function a cold start (see --cold)."""
+        if self.args.cold == "scale0":
+            if configure:
+                self.configure(codes, force_cold=False, **configure)
+            self.scale_to_zero(codes)
+        else:
+            if self.args.zero_first:
+                # A new revision gets as many rollout instances as the old one has (holds included), so the
+                # holds snowball from rep to rep; stopping the old revision's instances first avoids that.
+                # The configure below switches back to automatic scaling.
+                self.scale_to_zero(codes, restore=False)
+            self.configure(codes, force_cold=True, **configure)
+            # Let the rollout instance (and any extra one Cloud Run starts on its own a few seconds later) finish
+            # starting, so the holds land on idle instances instead of queueing and triggering more starts.
+            time.sleep(self.args.pre_hold_wait)
+            self.hold(codes, self.args.hold)
+
+    def started_instances(self, code) -> int:
+        """Instances started so far for the function's latest revision (system log; it lags a few seconds)."""
+        rev, since = self.revision[code]
+        since = dt.datetime.fromtimestamp(since - 120, dt.timezone.utc).isoformat()
+        body = {"resourceNames": [f"projects/{self.project}"], "pageSize": 100,
+                "filter": f'resource.type="cloud_run_revision" AND resource.labels.service_name="{self.fns[code]["service"]}" '
+                          f'AND resource.labels.revision_name="{rev}" AND timestamp>="{since}" '
+                          f'AND textPayload:"Starting new instance"'}
+        instances = set()
+        for _ in range(10):  # the API can return empty pages with a token while it scans
+            page = self._request("POST", f"{LOGGING}/entries:list", json=body)
+            instances |= {e.get("labels", {}).get("instanceId") for e in page.get("entries", [])}
+            if not page.get("nextPageToken"):
+                break
+            body["pageToken"] = page["nextPageToken"]
+        return len(instances)
 
     def codes_for(self, codes, tier):
-        return [c for c in codes if not (c in SDK_CODES and tier["memory_mb"] < SDK_MIN_MEMORY_MB)]
+        return [c for c in codes if not (c in SDK_CODES and tier["memory_mb"] < SDK_MIN_MEMORY_MB)
+                and (not self.args.fns or c in self.args.fns.split(","))]
 
     # --- running the client --------------------------------------------------------------------
 
@@ -267,7 +341,8 @@ class Campaign:
                                           "find . -name '*.jsonl' -not -path './aborted/*'"],
                               capture_output=True, text=True, check=True)
         self.done = {line[2:] for line in proc.stdout.split()}
-        for root, _, files in os.walk(self.local_dir):
+        for root, dirs, files in os.walk(self.local_dir):
+            dirs[:] = [d for d in dirs if not (root == self.local_dir and d == "aborted")]
             for f in files:
                 if f.endswith(".jsonl"):
                     self.done.add(os.path.relpath(os.path.join(root, f), self.local_dir))
@@ -318,9 +393,11 @@ class Campaign:
     def e2(self, tier, boosts, reps=20):
         codes = self.codes_for(CODES + SDK_CODES, tier)
         serial = self.args.e2_serial
+        # Only 1 vCPU instances threaten the CPU quota; scale0 stops all instances anyway.
+        parking = serial and float(tier["cpu"]) >= 0.5 and self.args.cold == "hold"
         for boost in boosts:
             tag = "boost" if boost else "noboost"
-            if serial:
+            if parking:
                 self.park(codes, boost=boost)
             else:
                 self.configure(codes, boost=boost, force_cold=False)
@@ -333,13 +410,13 @@ class Campaign:
                     group = [c for c in group if not self.is_done(path(c))]
                     if not group:
                         continue
-                    self.configure(group, tier=tier if serial else None, force_cold=True)
-                    self.hold(group, self.args.hold)
+                    self.cold(group, **({"tier": tier} if parking else {}))
                     for code in group:
                         self.client(code, path(code),
-                                    {"exp": "e2", "tier": tier["label"], "rep": rep, "serial": serial},
+                                    {"exp": "e2", "tier": tier["label"], "rep": rep, "serial": serial,
+                                     "cold": self.args.cold},
                                     mode=mode, calls=5)
-                    if serial:
+                    if parking:
                         self.park(group)
                 self.say(f"  e2 {tier['label']} {tag} rep {rep + 1}/{reps} ({mode}) done")
         self.configure(codes, tier=tier if serial else None, boost=self.args.default_boost, force_cold=False)
@@ -351,11 +428,11 @@ class Campaign:
                 todo = [c for c in ("010", "110") if not self.is_done(path(c))]
                 if not todo:
                     continue
-                self.configure(todo, force_cold=True)
-                self.hold(todo, self.args.hold)
+                self.cold(todo)
                 for code in todo:
                     self.client(code, path(code),
-                                {"exp": "e1b", "tier": tier["label"], "rep": rep, "interval": interval},
+                                {"exp": "e1b", "tier": tier["label"], "rep": rep, "interval": interval,
+                                 "cold": self.args.cold},
                                 calls=40, interval=interval)
             self.say(f"  e1b {tier['label']} rep {rep + 1}/{reps} done")
 
@@ -478,6 +555,20 @@ def main(argv=None):
                    help="Seconds to hold the rollout-started instance before e2/e1b sessions (must outlast them)")
     p.add_argument("--e2-serial", action="store_true",
                    help="Configure (and in e2 hold and measure) one function at a time: stays under the CPU quota at 1 vCPU")
+    p.add_argument("--cold", choices=["hold", "scale0"], default="hold",
+                   help="Cold starts: new revision + hold its pre-started instance (hold), or stop all instances "
+                        "and restore autoscaling (scale0, no new revision)")
+    p.add_argument("--drain", type=float, default=12, help="scale0: seconds at 0 instances")
+    p.add_argument("--timeout", type=int, help="Set the services' request timeout (s); default: keep SeBS's")
+    p.add_argument("--holds", type=int, default=1, help="Hold requests per function before a cold session; 0: one per instance started for the revision")
+    p.add_argument("--zero-first", action="store_true",
+                   help="hold mode: stop all instances before the new revision (keeps its rollout small)")
+    p.add_argument("--max-holds", type=int, default=4, help="--holds 0: cap on the counted instances")
+    p.add_argument("--fns", help="Only these functions (comma-separated codes), e.g. for a trial")
+    p.add_argument("--spare-holds", type=int, default=0,
+                   help="--holds 0: extra holds for instances that start after the count")
+    p.add_argument("--pre-hold-wait", type=float, default=0, help="Seconds between the new revision and the holds")
+    p.add_argument("--hold-wait", type=float, default=3, help="Seconds between the holds and the session")
     p.add_argument("--resume", action="store_true",
                    help="Skip sessions whose output already exists (VM, and locally for WAN runs)")
     p.add_argument("--skip-wan", action="store_true", help="Don't repeat e1's workstation (WAN) run at the first tier")

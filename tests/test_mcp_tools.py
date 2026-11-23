@@ -7,6 +7,8 @@ Requires the SeBS patch to be applied (scripts/sebs-patch.sh apply).
 
 import importlib.util
 import os
+import subprocess
+import sys
 import threading
 import unittest
 from unittest import mock
@@ -36,13 +38,22 @@ class Upstream:
         self.server.server_close()
 
 
+def has_pandas(python: str) -> bool:
+    return subprocess.run([python, "-c", "import pandas"], capture_output=True).returncode == 0
+
+
+# 630.data-analysis needs pandas in the function's interpreter (pip install pandas numpy).
+DATA_PYTHON = os.environ.get("SEBS_DATA_PYTHON", sys.executable)
+
+
 class ToolTest(unittest.TestCase):
     benchmark = None
+    python = sys.executable
 
     @classmethod
     def setUpClass(cls):
         cls.upstream = Upstream()
-        cls.function = FakeLambda(cls.benchmark)
+        cls.function = FakeLambda(cls.benchmark, python=cls.python)
 
     @classmethod
     def tearDownClass(cls):
@@ -152,3 +163,48 @@ class FetchMarkdown(ToolTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(has_pandas(DATA_PYTHON), "set SEBS_DATA_PYTHON to an interpreter with pandas")
+class DataAnalysis(ToolTest):
+    benchmark = "600.mcp/630.data-analysis"
+    python = DATA_PYTHON
+
+    def test_sebs_input_and_validation(self):
+        arguments = self.sebs_input("test")
+        client = self.client()
+        tools, _ = client.list_tools()
+        self.assertEqual(tools[0]["name"], "summarize_catalog")
+        output = client.call_tool("summarize_catalog", arguments)[0]["structuredContent"]
+        self.validate(arguments, output)
+
+    def test_dataset_loaded_once_per_instance(self):
+        client = self.client()
+        arguments = {"upstream": self.upstream.url, "latency_ms": 20, "size": 65536, "seed": 7}
+        first = client.call_tool("summarize_catalog", arguments)[0]["structuredContent"]["measurement"]
+        self.assertTrue(first["loaded"])
+        self.assertGreaterEqual(first["upstream_wait_us"], 20_000)
+        self.assertGreaterEqual(first["load_us"], first["upstream_wait_us"])
+        for group_by in ("month", "tag", "stock"):
+            out = client.call_tool("summarize_catalog", dict(arguments, group_by=group_by))[0]["structuredContent"]
+            self.assertFalse(out["measurement"]["loaded"])
+            self.assertEqual(out["measurement"]["load_us"], 0)
+            self.assertEqual(out["result"]["group_by"], group_by)
+        # Another dataset is loaded on its own first use.
+        other = client.call_tool("summarize_catalog", dict(arguments, seed=8))[0]["structuredContent"]
+        self.assertTrue(other["measurement"]["loaded"])
+
+    def test_groups_are_consistent(self):
+        client = self.client()
+        out = client.call_tool(
+            "summarize_catalog", {"upstream": self.upstream.url, "size": 65536, "group_by": "stock", "limit": 5}
+        )[0]["structuredContent"]["result"]
+        self.assertEqual(out["total_groups"], 2)
+        self.assertEqual(sum(g["count"] for g in out["groups"]), out["matching"])
+        for g in out["groups"]:
+            self.assertLessEqual(g["median_price"], g["p90_price"])
+
+    def test_invalid_group_is_tool_error(self):
+        client = self.client()
+        with self.assertRaisesRegex(RuntimeError, "failed|group_by"):
+            client.call_tool("summarize_catalog", {"upstream": self.upstream.url, "size": 4096, "group_by": "x"})

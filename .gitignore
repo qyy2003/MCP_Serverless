@@ -4,3 +4,4 @@ __pycache__/
 results/
 # deployment-specific: public Lambda Function URLs and the mock upstream address
 configs/replay.aws.json
+configs/idle.*.json

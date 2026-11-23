@@ -7,6 +7,7 @@ Newest first. Each entry: what was done → what came out of it. Details live in
 | Area | State |
 |---|---|
 | MCP wrapper, census, 2 tool benchmarks, replay driver | done (before 2026-11-18, see README) |
+| Heavy-startup tool benchmark `630.data-analysis` | **built** 2026-11-22 (default + SDK variant, tests, local characterisation); GCP cold starts at 1 and 0.333 vCPU measured: [idle-experiment.md](idle-experiment.md) |
 | SeBS local Docker runs | done: warm/cold suite on 4 benchmarks (2026-11-18), [results](results-local.md) |
 | AWS Lambda campaign E1–E5 (teammate) | done 2026-11-18: [aws-results.md](aws-results.md) |
 | Billing analysis (Q4) | first answer from the AWS campaign (E5) |
@@ -15,11 +16,59 @@ Newest first. Each entry: what was done → what came out of it. Details live in
 | Official-SDK tool variant (realistic dependencies) | **built and tested locally** 2026-11-19: `--language-variant sdk` of 610/620 (`mcp==2.3.0`), measured by `characterize.py`. No cloud run yet |
 | MCP 2026-07-28 (no handshake) in shim and client | **done** 2026-11-19: both servers speak both revisions; `--protocol legacy\|modern\|auto`; SDK client conformance tests. Protocol cost experiment: `experiments/protocols.py` |
 | Replay fixes (tool-router calls, more traces) | not started |
-| GCP + Azure runs (needed for the presentation) | **MCP routing done** 2026-11-19 (shim + SDK variant, both protocol revisions; tested against local emulations). **GCP:** account `hpc-2026` set up, `010.sleep` smoke test on gen2 passed 2026-11-20 (startup CPU boost caveat below). **GCP campaign E1–E4 done** 2026-11-20 (`experiments/gcp_campaign.py`, results not analysed yet). Still needed: Azure account and campaign. SeBS has no Oracle backend, so the third cloud is Azure |
+| Real MCP servers measured (gap argument) | **done** 2026-11-22: [real-servers.md](real-servers.md) |
+| Idle-time experiment (cold starts of sparse traffic) | **GCP done** 2026-11-22 (sharp edge at 15 min); AWS by the teammate: [idle-experiment.md](idle-experiment.md) |
+| GCP + Azure runs (needed for the presentation) | **MCP routing done** 2026-11-19 (shim + SDK variant, both protocol revisions; tested against local emulations). **GCP:** account `hpc-2026` set up, `010.sleep` smoke test on gen2 passed 2026-11-20 (startup CPU boost caveat below). **GCP campaign E1–E4 done** 2026-11-20, **analysed** 2026-11-22: [gcp-results.md](gcp-results.md). Still needed: Azure account and campaign. SeBS has no Oracle backend, so the third cloud is Azure |
 
 ## Log
 
-### 2026-11-20 (evening): GCP campaign, the 1 vCPU tier hits the project's CPU quota
+### 2026-11-22 (evening): heavy-startup benchmark 630.data-analysis; idle-time results (GCP)
+
+The real-server measurement showed a class our tools didn't cover: servers that are expensive to start (scientific
+stack, data loaded at startup). `600.mcp/630.data-analysis` (tool `summarize_catalog`) imports pandas/numpy, loads a
+dataset from the mock upstream on an instance's first call (`load_us`), then answers each call (group by month/tag/stock,
+price and rating statistics) from memory. Input sizes set the dataset: 64 KB / 1 MB after 200 ms / 8 MB after 1 s.
+Both variants (`default`: SeBS shim + pandas, 150 MB installed; `sdk`: official SDK + pandas, 191 MB). Tests in
+`tests/test_mcp_tools.py` and `test_mcp_sdk.py` (need `SEBS_DATA_PYTHON` / `SEBS_SDK_PYTHON` with pandas).
+
+- Local, 1 CPU (`characterize.py --only 630`): import 217 ms (SDK + pandas: 667 ms, vs 450 ms for the SDK alone),
+  1 MB dataset load 233 ms (mostly the 200 ms upstream delay), warm calls 10–15 ms and CPU-bound. In the
+  real-server figure the SDK variant sits at the real servers' p75 (import only, the load comes on top).
+- GCP gen2 deploy (SeBS, 2026-11-22): works in both variants. On the first, pre-started instances at 1 vCPU (boost on),
+  importing pandas took **3.7 s** and SDK + pandas **7.3 s**, 17× and 11× the laptop.
+- Natural cold starts at 2048 MB / 1 vCPU, boost on, after 17 min idle (6 per variant, `results/idle/gcp-630-2048`):
+  time to first result 3.3–6.4 s (SDK: 6.2–9.0 s), vs 1.3–1.7 s for the stdlib 610/620 at that tier.
+  Same at 512 MB / 0.333 vCPU (20:10–21:53 UTC, `results/idle/gcp-630-512`): 3.9–7.8 s (SDK 5.4–10.8 s); with the
+  boost on, the tier barely matters. 24 of 24 probes cold and request-started, 0 errors.
+
+**Idle-time run, GCP** (14:51–18:32 UTC, 91 probes, 0 errors; [idle-experiment.md](idle-experiment.md#results-gcp-2026-11-22)):
+all 49 probes after ≤ 15 min idle warm, all 42 after ≥ 16 min cold, on gen1 and gen2 alike; every gen2 cold probe
+started its own instance. gen1 natural cold start ~0.9 s vs SeBS's forced 2.1–2.5 s. Client VM stopped afterwards (2026-11-22 ~22:00 UTC).
+
+Also: the gap figures' group "MCP tools, stdlib (ours)" is now "MCP tools, without SDK (ours)", since 630's default
+variant isn't stdlib-only.
+
+### 2026-11-22 (afternoon): real MCP servers measured; SeBS cold starts on GCP checked; idle-time experiment set up
+
+**Real servers** ([real-servers.md](real-servers.md)): 27 servers from LiveMCPBench, each installed and started in a throwaway container at 1 CPU (`experiments/real_servers/`, `analysis/real_servers.py`). Median 42 MB, 96 dependencies, 547 ms to initialise, 87 MB peak memory. Our SDK variant (41 MB, 460 ms) sits at the median, while the stdlib tools understate cold starts by about 100×. Startup is CPU-bound for 26 of 27. 3 of 13 Python servers break with MCP SDK 2.x (they don't pin `mcp<2`).
+
+**SeBS cold starts on GCP** (scratch tests; SeBS `perf-cost` cold, 010.sleep):
+- gen1 (SeBS's default) **hangs forever** in `enforce_cold_start`: `is_deployed` compares the v1 API's string `versionId` with an int. Fixed in our patch (upstream PR candidate). After the fix: 8/8 cold, 2.1–2.5 s from the workstation.
+- gen2: 5/5 flagged cold. 4 of the 5 were served by instances started 7–11 s before the request (1.1 s each); 1 started its own instance (2.5 s). A natural cold start of the same function after ~1 h idle took 0.95 s from the VM. So the pre-started instances apparently don't hide much of the boot at 1 vCPU. Ground truth: the natural cold starts of the idle run.
+- Natural cold starts at 128 MB / 0.083 vCPU without boost (services idle since 11-21): 9.7 s (010) and 8.8 s (110), AUTOSCALING started by the request. Matches the campaign's held sessions (9.4–11.2 s), so E2 is valid.
+- Cloud Run's request-log latency included the startup for these natural cold starts but not for the campaign's held sessions. Don't use it for cold starts.
+
+**Idle-time experiment** ([idle-experiment.md](idle-experiment.md)): `experiments/idle_probe.py` (one chain per function, probe → idle t → probe), `analysis/idle_results.py`, `experiments/gcp_logs.py`, `experiments/gcp_configure.py`. GCP tools set to 512 MB / 0.333 vCPU / boost on; 010 gen1 and gen2 as SeBS deploys them. Client VM restarted (new IP 207.175.158.212). Pilot (gaps 1, 3, 30 min) running. AWS: the teammate runs it with the same grid.
+
+### 2026-11-22: GCP campaign analysed
+
+`analysis/gcp_results.py` (tables: [gcp-tables-2026-11-20.md](gcp-tables-2026-11-20.md), figures `figures/gcp/`, write-up [gcp-results.md](gcp-results.md)). Cold sessions are filtered through `gcp_session_check.classify`: 477 of the 487 left after the earlier move-aside pass. No new cloud runs. Main results: cold starts at 0.083 vCPU take ~9–11 s without the startup CPU boost and ~1 s with it; the boost does nothing at 1 vCPU. Even at 1 vCPU, GCP cold starts are 3–5× Lambda's. The SDK import takes 2.2–2.7 s at 1 vCPU. Warm calls at 0.083 vCPU are bimodal (~11 / ~90 ms). Cloud Run's 100 ms billing granularity makes the MCP handshake 23–24% of the replay's cost (Lambda: 8.8%).
+
+Found while analysing: Cloud Run's request-log latency leaves out most of a cold start (use client time + startup-probe timestamps); `cpu_us` has 10 ms resolution on Cloud Run. **To do before presenting:** check Cloud Run prices and the 100 ms rounding rule (the price page couldn't be fetched; the constants in `gcp_results.py` are 2025 list prices).
+
+### 2026-11-20 (night): checking the cold sessions; stopped
+
+`experiments/gcp_session_check.py` joins client records (`trace_id`) with Cloud Run's request and system logs and checks that each e2/e1b session's first request started a new instance itself. 216 of 676 sessions failed (mostly 128 and 512 MB: first request on a pre-started or idle instance, or on the instance whose hold had been cut by the request timeout; `110` has 10 s). Reruns with changed protocols (timeout 300 s, several holds, scale to zero via manual scaling, one hold per started instance) each ran into another Cloud Run behaviour: front-end 500s and spontaneous instance starts after switching scaling modes, and a new revision getting as many rollout instances as the previous one had, so counted holds snowballed until the services hit max instances (429). **Stopped there (user decision).** Clean sessions now: 2048 MB 232/240; 512 MB mostly 12–19 per cell (SDK without boost: 5 and 3); 128 MB mostly 8–18 (`110` without boost: 4, `620` with boost: 3); e1b 2–4 per cell. Use only sessions the check passes and report n per cell; the moved-aside sessions are in `aborted/` (on the VM and locally). Services now have timeout 300 s (SeBS: 10–120 s). The `--zero-first`/`--max-holds` options are untested. Client VM stopped; functions left deployed (idle, scale to zero).
 
 **Campaign complete (20:28):** `results/gcp/2026-11-20/`: e2 at 3 tiers × boost off/on × 20 reps (4 functions at 128 MB, 6 at 512/2048 MB; 760 sessions), e1b, e1 and e3 at all tiers, e1wan at 128 MB, e4 (128 MB, arrival 1/10/60 s, 0 errors), `requests.jsonl` (11,576 entries) and `system.jsonl` (11,377). Not analysed yet; analysis must filter cold-start sessions by the instance start reason and check for holds cut off by the timeout (below).
 

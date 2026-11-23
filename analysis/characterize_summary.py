@@ -39,7 +39,7 @@ SERIES = ["#2a78d6", "#eb6834"]  # fixed order: SeBS, MCP tools (validated: all 
 # group: (color, marker, filled). The SDK variant is the same tools, so the same hue; hollow tells it apart.
 GROUPS = {
     "SeBS benchmarks": (SERIES[0], "o", True),
-    "MCP tools, stdlib (ours)": (SERIES[1], "^", True),
+    "MCP tools, without SDK (ours)": (SERIES[1], "^", True),
     "MCP tools, official SDK (ours)": (SERIES[1], "^", False),
 }
 
@@ -69,7 +69,7 @@ def load(run_dir):
         if not benchmark.startswith("6"):
             group = "SeBS benchmarks"
         else:
-            group = "MCP tools, official SDK (ours)" if variant == "sdk" else "MCP tools, stdlib (ours)"
+            group = "MCP tools, official SDK (ours)" if variant == "sdk" else "MCP tools, without SDK (ours)"
         # SDK variant: the server is imported at startup, not during the call
         imports = cold.init_import_us if "init_import_us" in cold and cold.init_import_us.notna().any() else cold.import_us
         package_key = benchmark + ("" if variant == "default" else f"@{variant}")
@@ -101,8 +101,8 @@ def short(config):
     sdk = " SDK" if "@sdk" in config else ""
     if number == "610":
         return f"610{sdk} {parts[-2].replace('lat', '')}ms/{parts[-1]}"
-    if number == "620":
-        return f"620{sdk} {parts[-1]}"
+    if number in ("620", "630"):
+        return f"{number}{sdk} {parts[-1]}"
     return f"{number}-{parts[-1]}"
 
 
@@ -111,7 +111,7 @@ def cluster_label(configs):
     by_number = {}
     for c in configs:
         label = short(c)
-        if label.startswith(("610", "620")):
+        if label.startswith(("610", "620", "630")):
             by_number.setdefault(label, set())
             continue
         number, size = label.split("-", 1)
@@ -135,7 +135,7 @@ def annotate(ax, df, x, y, label_all_sebs=True, label_sdk=False):
     2. Labels are placed in order; a label that would overlap one already placed moves to another side
        of its point, unless the two points are close, in which case the labels merge ('502/503-test').
     Labels stay inside the axes."""
-    extremes = df.config.str.endswith(("lat50-4k", "lat1000-64k", "1000kB", "10kB"))
+    extremes = df.config.str.endswith(("lat50-4k", "lat1000-64k", "1000kB", "10kB", "1024k"))
     sdk = df.variant == "sdk"
     wanted = df[(df.group == "SeBS benchmarks") & label_all_sebs | extremes & (~sdk | label_sdk)]
     renderer = ax.figure.canvas.get_renderer()

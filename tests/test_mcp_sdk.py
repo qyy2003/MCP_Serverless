@@ -17,7 +17,7 @@ import urllib.request
 
 from mcp_bench.client import MCPClient, run_mcp, run_plain
 from tests.test_mcp_e2e import BENCHMARKS, FakeLambda
-from tests.test_mcp_tools import Upstream
+from tests.test_mcp_tools import Upstream, has_pandas
 
 SDK_PYTHON = os.environ.get("SEBS_SDK_PYTHON")
 
@@ -140,6 +140,18 @@ class FetchMarkdownSDK(SDKVariant):
     benchmark = "600.mcp/620.fetch-markdown"
     tool = "fetch"
     arguments = {"latency_ms": 20, "size": 20000, "seed": 1, "max_length": 2000}
+
+
+@unittest.skipUnless(SDK_PYTHON and has_pandas(SDK_PYTHON), "SEBS_SDK_PYTHON needs pandas too for 630")
+class DataAnalysisSDK(SDKVariant):
+    benchmark = "600.mcp/630.data-analysis"
+    tool = "summarize_catalog"
+    arguments = {"latency_ms": 20, "size": 65536, "seed": 1, "group_by": "month"}
+    seeds = iter(range(100, 10_000))
+
+    def args(self) -> dict:
+        # A new dataset each time: only a dataset's first call waits on the upstream, which the shared tests expect.
+        return dict(super().args(), seed=next(self.seeds))
 
 
 del SDKVariant  # abstract: only the subclasses run

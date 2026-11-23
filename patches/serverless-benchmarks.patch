@@ -639,6 +639,291 @@ index 00000000..5d2990cf
 +# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
 +# The official MCP Python SDK, pinned so package size and import time are reproducible.
 +mcp==2.3.0
+diff --git a/benchmarks/600.mcp/630.data-analysis/config.json b/benchmarks/600.mcp/630.data-analysis/config.json
+new file mode 100644
+index 00000000..688542a7
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/config.json
+@@ -0,0 +1,14 @@
++{
++  "timeout": 120,
++  "memory": 512,
++  "languages": [
++    {
++      "language": "python",
++      "variants": [
++        "default",
++        "sdk"
++      ]
++    }
++  ],
++  "modules": []
++}
+diff --git a/benchmarks/600.mcp/630.data-analysis/input.py b/benchmarks/600.mcp/630.data-analysis/input.py
+new file mode 100644
+index 00000000..9777ac80
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/input.py
+@@ -0,0 +1,53 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++import os
++
++# Upstream delay (ms) and dataset size (bytes) per input size. The dataset is fetched and
++# parsed once per instance, so these set the startup cost on top of importing pandas.
++size_generators = {
++    'test': (10, 65536),
++    'small': (200, 1048576),
++    'large': (1000, 8388608),
++}
++
++
++def upstream_url():
++    url = os.environ.get('SEBS_MOCK_UPSTREAM')
++    if not url:
++        raise RuntimeError(
++            'Set SEBS_MOCK_UPSTREAM to the URL of the mock upstream service '
++            '(python -m mcp_bench.mock_upstream), reachable from the functions.'
++        )
++    return url
++
++
++def buckets_count():
++    return (0, 0)
++
++
++def generate_input(data_dir, size, benchmarks_bucket, input_paths, output_paths, upload_func, nosql_func):
++    latency_ms, dataset_size = size_generators[size]
++    return {
++        'upstream': upstream_url(),
++        'latency_ms': latency_ms,
++        'size': dataset_size,
++        'seed': 1,
++        'group_by': 'month',
++        'min_rating': 3.0,
++        'limit': 12,
++    }
++
++
++def validate_output(data_dir: str | None, input_config: dict, output: dict, language: str, storage = None) -> str | None:
++    result = output.get('result', {})
++    groups = result.get('groups')
++    limit = input_config.get('limit', 12)
++    if not isinstance(groups, list) or not 0 < len(groups) <= limit:
++        return f"Expected between 1 and {limit} groups, got {groups!r:.200}"
++    if not 0 < result.get('matching', 0) <= result.get('rows', 0):
++        return f"Matching rows {result.get('matching')} not within the dataset's {result.get('rows')} rows"
++    if any(g.get('mean_rating', 0) < input_config.get('min_rating', 0) for g in groups):
++        return "A group's mean rating is below min_rating"
++    measurement = output.get('measurement', {})
++    if measurement.get('loaded') and measurement.get('upstream_wait_us', 0) < input_config['latency_ms'] * 1000:
++        return f"Upstream wait {measurement.get('upstream_wait_us')} us is shorter than the configured latency"
++    return None
+diff --git a/benchmarks/600.mcp/630.data-analysis/mcp.json b/benchmarks/600.mcp/630.data-analysis/mcp.json
+new file mode 100644
+index 00000000..56a64ebf
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/mcp.json
+@@ -0,0 +1,17 @@
++{
++  "name": "summarize_catalog",
++  "description": "Summarise the product catalog: count, price statistics and rating per group.",
++  "inputSchema": {
++    "type": "object",
++    "properties": {
++      "upstream": {"type": "string", "description": "Benchmark parameter: base URL of the upstream API."},
++      "latency_ms": {"type": "number", "description": "Benchmark parameter: upstream response delay in milliseconds."},
++      "size": {"type": "integer", "description": "Benchmark parameter: dataset size in bytes."},
++      "seed": {"type": "integer", "description": "Benchmark parameter: selects the generated dataset."},
++      "group_by": {"type": "string", "enum": ["month", "tag", "stock"], "description": "Column to group the products by.", "default": "month"},
++      "min_rating": {"type": "number", "description": "Only include products rated at least this.", "default": 0},
++      "limit": {"type": "integer", "description": "Maximum number of groups to return.", "default": 12}
++    },
++    "required": ["upstream"]
++  }
++}
+diff --git a/benchmarks/600.mcp/630.data-analysis/python/function.py b/benchmarks/600.mcp/630.data-analysis/python/function.py
+new file mode 100644
+index 00000000..8ee7e7fe
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/python/function.py
+@@ -0,0 +1,115 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++"""Heavy-startup MCP tool: summarise a dataset with pandas.
++
++The third tool class next to the API wrapper (610) and the page fetcher (620): servers
++that are expensive to start. Real MCP servers of this kind (finance, data analysis,
++knowledge bases) import a scientific stack and load reference data once per process,
++then answer each call from memory (docs/real-servers.md: 0.5-6 s to start at 1 vCPU,
++some fetching their data at startup). The cost that matters is paid once per instance,
++so it is part of every cold start:
++
++- importing pandas and numpy (module level, measured by the wrapper's import time),
++- fetching the dataset from the upstream and building the DataFrame (on the first call
++  of an instance, cached for later calls; `load_us` in the measurement, 0 when warm).
++
++Each call then filters and aggregates the cached frame, which is cheap. The upstream is
++the mock service of the MCP benchmark harness (`/api`: JSON records, `size` bytes after
++`latency_ms`).
++"""
++
++import http.client
++import json
++from time import perf_counter
++from urllib.parse import urlencode, urlsplit
++
++import numpy as np
++import pandas as pd
++
++USER_AGENT = "SeBS-MCP/0.1 (https://github.com/spcl/serverless-benchmarks)"
++GROUPS = ("month", "tag", "stock")
++
++# Loaded once per instance: (upstream, size, seed) -> DataFrame.
++_datasets = {}
++
++
++def _us(seconds):
++    return int(seconds * 1e6)
++
++
++def _fetch(upstream, latency_ms, size, seed, timeout=120):
++    query = urlencode({"latency_ms": latency_ms, "size": size, "seed": seed})
++    parts = urlsplit("{}/api?{}".format(upstream.rstrip("/"), query))
++    cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
++    conn = cls(parts.netloc, timeout=timeout)
++    try:
++        conn.request("GET", parts.path + "?" + parts.query, headers={"User-Agent": USER_AGENT})
++        response = conn.getresponse()
++        body = response.read()
++    finally:
++        conn.close()
++    if response.status != 200:
++        raise RuntimeError("Upstream returned HTTP {}: {}".format(response.status, body[:200]))
++    return body
++
++
++def load(upstream, latency_ms, size, seed):
++    """The dataset as a DataFrame, fetched and prepared on an instance's first call."""
++    key = (upstream, size, seed)
++    if key in _datasets:
++        return _datasets[key], {"loaded": False, "load_us": 0}
++    begin = perf_counter()
++    body = _fetch(upstream, latency_ms, size, seed)
++    fetched = perf_counter()
++    frame = pd.DataFrame(json.loads(body)["items"])
++    frame["updated"] = pd.to_datetime(frame["updated"], utc=True)
++    frame["month"] = frame["updated"].dt.strftime("%Y-%m")
++    frame["stock"] = np.where(frame["in_stock"], "in stock", "sold out")
++    frame["value"] = frame["price"] * frame["rating"]
++    tags = frame[["id", "tags"]].explode("tags").rename(columns={"tags": "tag"})
++    frame = frame.drop(columns=["tags", "description"])
++    _datasets[key] = (frame, tags)
++    end = perf_counter()
++    return _datasets[key], {
++        "loaded": True,
++        "load_us": _us(end - begin),
++        "upstream_wait_us": _us(fetched - begin),
++        "parse_us": _us(end - fetched),
++        "upstream_bytes": len(body),
++        "rows": len(frame),
++    }
++
++
++def handler(event):
++    (frame, tags), measurement = load(
++        event["upstream"], event.get("latency_ms", 0), event.get("size", 1 << 20), event.get("seed", 0)
++    )
++    group_by = event.get("group_by", "month")
++    if group_by not in GROUPS:
++        raise ValueError("group_by must be one of {}".format(", ".join(GROUPS)))
++
++    begin = perf_counter()
++    rows = frame[frame["rating"] >= event.get("min_rating", 0)]
++    if group_by == "tag":
++        rows = rows.merge(tags, on="id")
++    stats = (
++        rows.groupby(group_by)
++        .agg(count=("id", "size"), mean_price=("price", "mean"), median_price=("price", "median"),
++             p90_price=("price", lambda s: s.quantile(0.9)), mean_rating=("rating", "mean"),
++             value=("value", "sum"))
++        .sort_values("value", ascending=False)
++    )
++    limit = event.get("limit", 12)
++    result = {
++        "rows": int(len(frame)),
++        "matching": int(rows["id"].nunique()),
++        "group_by": group_by,
++        "groups": [
++            {group_by: str(name), "count": int(r["count"]), "mean_price": round(float(r["mean_price"]), 2),
++             "median_price": round(float(r["median_price"]), 2), "p90_price": round(float(r["p90_price"]), 2),
++             "mean_rating": round(float(r["mean_rating"]), 2)}
++            for name, r in stats.head(limit).iterrows()
++        ],
++        "total_groups": int(len(stats)),
++    }
++    measurement["process_us"] = _us(perf_counter() - begin)
++    return {"result": result, "measurement": measurement}
+diff --git a/benchmarks/600.mcp/630.data-analysis/python/requirements.txt b/benchmarks/600.mcp/630.data-analysis/python/requirements.txt
+new file mode 100644
+index 00000000..d945cdda
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/python/requirements.txt
+@@ -0,0 +1,4 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++# The scientific stack data-analysis MCP servers ship (pinned for reproducible size and import time).
++numpy==2.2.6
++pandas==2.3.3
+diff --git a/benchmarks/600.mcp/630.data-analysis/python/sdk/mcp_server.py b/benchmarks/600.mcp/630.data-analysis/python/sdk/mcp_server.py
+new file mode 100644
+index 00000000..36ca7079
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/python/sdk/mcp_server.py
+@@ -0,0 +1,35 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++"""The data-analysis tool as an MCP server built on the official Python SDK.
++
++Same tool logic as the default variant (function.py), registered the way real MCP
++servers do. Importing this module imports pandas and numpy (through function.py), so
++the SDK variant pays the whole import at instance startup, like a real server.
++"""
++
++from typing import Annotated, Any, Literal
++
++from mcp.server.mcpserver import MCPServer
++from pydantic import Field
++
++from . import function
++
++mcp = MCPServer("sebs-data-analysis")
++
++
++@mcp.tool()
++def summarize_catalog(
++    upstream: Annotated[str, Field(description="Benchmark parameter: base URL of the upstream API.")],
++    latency_ms: Annotated[float, Field(description="Benchmark parameter: upstream response delay in milliseconds.")] = 0,
++    size: Annotated[int, Field(description="Benchmark parameter: dataset size in bytes.")] = 1 << 20,
++    seed: Annotated[int, Field(description="Benchmark parameter: selects the generated dataset.")] = 0,
++    group_by: Annotated[
++        Literal["month", "tag", "stock"], Field(description="Column to group the products by.")
++    ] = "month",
++    min_rating: Annotated[float, Field(description="Only include products rated at least this.")] = 0,
++    limit: Annotated[int, Field(description="Maximum number of groups to return.")] = 12,
++) -> dict[str, Any]:
++    """Summarise the product catalog: count, price statistics and rating per group."""
++    return function.handler(dict(
++        upstream=upstream, latency_ms=latency_ms, size=size, seed=seed, group_by=group_by,
++        min_rating=min_rating, limit=limit,
++    ))
+diff --git a/benchmarks/600.mcp/630.data-analysis/python/sdk/requirements.txt b/benchmarks/600.mcp/630.data-analysis/python/sdk/requirements.txt
+new file mode 100644
+index 00000000..e8d0b02b
+--- /dev/null
++++ b/benchmarks/600.mcp/630.data-analysis/python/sdk/requirements.txt
+@@ -0,0 +1,5 @@
++# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
++# Replaces the default variant's requirements: the official MCP SDK plus the same scientific stack.
++mcp==2.3.0
++numpy==2.2.6
++pandas==2.3.3
 diff --git a/benchmarks/wrappers/aws/python/handler.py b/benchmarks/wrappers/aws/python/handler.py
 index c544f396..3993bc35 100644
 --- a/benchmarks/wrappers/aws/python/handler.py
@@ -1767,10 +2052,25 @@ index 01abe06f..801b2f22 100644
      class NodeJS(Enum):
          """Node.js runtime variants."""
 diff --git a/sebs/gcp/gcp.py b/sebs/gcp/gcp.py
-index ef15f8e3..d504c899 100644
+index ef15f8e3..99cffcea 100644
 --- a/sebs/gcp/gcp.py
 +++ b/sebs/gcp/gcp.py
-@@ -2417,7 +2417,7 @@ class GCP(System):
+@@ -841,10 +841,12 @@ class CloudFunctionGen1Strategy(DeploymentStrategy):
+         name = self.get_full_function_name(self.config.project_name, self.config.region, func_name)
+         status_req = self.function_client.projects().locations().functions().get(name=name)
+         status_res = self._execute_with_retry(self.logging, status_req)
++        # The v1 API returns versionId as a string (int64 in JSON); compare as integers.
++        current = int(status_res["versionId"])
+         if versionId == -1:
+-            return (status_res["status"] == "ACTIVE", status_res["versionId"])
++            return (status_res["status"] == "ACTIVE", current)
+         else:
+-            return (status_res["versionId"] == versionId, status_res["versionId"])
++            return (current == int(versionId), current)
+ 
+     def delete_function(self, func_name: str) -> None:
+         """Delete a Google Cloud Function.
+@@ -2417,7 +2419,7 @@ class GCP(System):
          func_name = "sebs-{}-{}-{}-{}-{}".format(
              resource_id,
              benchmark_number,

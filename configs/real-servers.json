@@ -1,0 +1,242 @@
+[
+ {
+  "name": "osm-mcp-server",
+  "language": "python",
+  "package": "osm-mcp-server",
+  "bin": "osm-mcp-server",
+  "args": [],
+  "category": "api_wrapper",
+  "python": "3.13",
+  "extra": [
+   "mcp<2"
+  ],
+  "note": "breaks with mcp 2.x (unpinned dependency); measured with mcp<2"
+ },
+ {
+  "name": "wikipedia",
+  "language": "python",
+  "package": "wikipedia-mcp",
+  "bin": "wikipedia-mcp",
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "yahoo-finance",
+  "language": "python",
+  "package": "mcp-yahoo-finance",
+  "bin": "mcp-yahoo-finance",
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "mcp-simple-arxiv",
+  "language": "python",
+  "package": "mcp-simple-arxiv==0.2.3",
+  "bin": "mcp-simple-arxiv",
+  "args": [],
+  "category": "api_wrapper",
+  "extra": [
+   "mcp<2"
+  ],
+  "note": "breaks with mcp 2.x (unpinned dependency); measured with mcp<2"
+ },
+ {
+  "name": "arxiv-mcp-server",
+  "language": "python",
+  "package": "arxiv-mcp-server",
+  "bin": "arxiv-mcp-server",
+  "args": [
+   "--storage-path",
+   "/tmp/arxiv"
+  ],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "time",
+  "language": "python",
+  "package": "mcp-server-time",
+  "bin": "mcp-server-time",
+  "args": [
+   "--local-timezone=America/New_York"
+  ],
+  "category": "local_compute"
+ },
+ {
+  "name": "calculator",
+  "language": "python",
+  "package": "mcp-server-calculator",
+  "bin": "mcp-server-calculator",
+  "args": [],
+  "category": "local_compute"
+ },
+ {
+  "name": "word-document-server",
+  "language": "python",
+  "package": "office-word-mcp-server",
+  "bin": "word_mcp_server",
+  "args": [],
+  "category": "local_compute"
+ },
+ {
+  "name": "ppt",
+  "language": "python",
+  "package": "office-powerpoint-mcp-server",
+  "bin": "ppt_mcp_server",
+  "args": [],
+  "category": "local_compute",
+  "extra": [
+   "mcp<2"
+  ],
+  "note": "breaks with mcp 2.x (unpinned dependency); measured with mcp<2"
+ },
+ {
+  "name": "music-analysis",
+  "language": "python",
+  "package": "mcp-music-analysis",
+  "bin": "mcp-music-analysis",
+  "args": [],
+  "category": "local_compute",
+  "python": "3.13"
+ },
+ {
+  "name": "fetch",
+  "language": "python",
+  "package": "mcp-server-fetch",
+  "bin": "mcp-server-fetch",
+  "args": [],
+  "category": "search_fetch"
+ },
+ {
+  "name": "git",
+  "language": "python",
+  "package": "mcp-server-git",
+  "bin": "mcp-server-git",
+  "args": [],
+  "category": "filesystem_git"
+ },
+ {
+  "name": "basic-memory",
+  "language": "python",
+  "package": "basic-memory",
+  "bin": "basic-memory",
+  "args": [
+   "mcp"
+  ],
+  "category": "memory_rag",
+  "python": "3.13"
+ },
+ {
+  "name": "trends-hub",
+  "language": "node",
+  "package": "mcp-trends-hub@1.6.2",
+  "bin": null,
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "mcp-server-chart",
+  "language": "node",
+  "package": "@antv/mcp-server-chart",
+  "bin": null,
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "hackernews",
+  "language": "node",
+  "package": "@devabdultech/hn-mcp-server",
+  "bin": null,
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "12306-mcp",
+  "language": "node",
+  "package": "12306-mcp",
+  "bin": null,
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "Context7",
+  "language": "node",
+  "package": "@upstash/context7-mcp",
+  "bin": null,
+  "args": [],
+  "category": "api_wrapper"
+ },
+ {
+  "name": "playwright",
+  "language": "node",
+  "package": "@executeautomation/playwright-mcp-server",
+  "bin": null,
+  "args": [],
+  "category": "browser"
+ },
+ {
+  "name": "searxng (doc-forge)",
+  "language": "node",
+  "package": "@cablate/mcp-doc-forge",
+  "bin": null,
+  "args": [],
+  "category": "local_compute"
+ },
+ {
+  "name": "image-extractor",
+  "language": "node",
+  "package": "mcp-image-extractor",
+  "bin": null,
+  "args": [],
+  "category": "local_compute"
+ },
+ {
+  "name": "howtocook-mcp",
+  "language": "node",
+  "package": "howtocook-mcp",
+  "bin": null,
+  "args": [],
+  "category": "local_data"
+ },
+ {
+  "name": "memory",
+  "language": "node",
+  "package": "@modelcontextprotocol/server-memory",
+  "bin": null,
+  "args": [],
+  "category": "memory_rag"
+ },
+ {
+  "name": "filesystem",
+  "language": "node",
+  "package": "@modelcontextprotocol/server-filesystem@2025.8.18",
+  "bin": null,
+  "args": [
+   "/tmp"
+  ],
+  "category": "filesystem_git"
+ },
+ {
+  "name": "sequential-thinking",
+  "language": "node",
+  "package": "@modelcontextprotocol/server-sequential-thinking",
+  "bin": null,
+  "args": [],
+  "category": "other"
+ },
+ {
+  "name": "duckduckgo-search",
+  "language": "node",
+  "package": "duckduckgo-mcp-server",
+  "bin": null,
+  "args": [],
+  "category": "search_fetch"
+ },
+ {
+  "name": "mcp-deepwiki",
+  "language": "node",
+  "package": "mcp-deepwiki",
+  "bin": null,
+  "args": [],
+  "category": "search_fetch"
+ }
+]

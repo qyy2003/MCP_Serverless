@@ -66,7 +66,7 @@ four tools, three memory sizes, cold and warm, plus trace replay ([docs/aws-resu
 | MCP wrapper for SeBS (any benchmark served as an MCP tool from the same function) | done for AWS Python and the local Python server; runs on AWS Lambda; reports CPU time and import time |
 | Timing client (MCP session vs. plain invocation) | done |
 | Census of the servers in MCP-Bench, MCP-Universe, LiveMCPBench (108 servers, 822 tools) | done |
-| Two tool benchmarks: `610.api-proxy`, `620.fetch-markdown`, plus a mock upstream | done |
+| Tool benchmarks: `610.api-proxy`, `620.fetch-markdown`, `630.data-analysis` (heavy startup), each with an official-SDK variant, plus a mock upstream | done (630 added 2026-11-22) |
 | Agent trace (LiveMCPBench, Claude Sonnet 4 run) and replay driver | done; replayed on Lambda at three arrival rates |
 | Runs on AWS Lambda | **first campaign done** (eu-north-1; `experiments/aws_campaign.py`, `analysis/aws_results.py`) |
 | Runs on SeBS local Docker | not started (needs the run image rebuilt) |
@@ -225,7 +225,7 @@ submodule. If you edit SeBS files and forget `export`, the changes exist only on
 Inside SeBS, our additions are:
 
 - `benchmarks/wrappers/mcp/python/mcp_shim.py`: the MCP server
-- `benchmarks/600.mcp/610.api-proxy`, `benchmarks/600.mcp/620.fetch-markdown`: the tool benchmarks
+- `benchmarks/600.mcp/610.api-proxy`, `620.fetch-markdown`, `630.data-analysis`: the tool benchmarks
 - `mcp.json` in `010.sleep` and `110.dynamic-html`: tool definitions for existing benchmarks
 - small edits to the AWS handler, the local server, `configs/systems.json`, `sebs/benchmark.py`
 

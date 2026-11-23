@@ -69,13 +69,16 @@ SEBS = [
     ("504.dna-visualisation", "small", None, None),
 ]
 
-# MCP tools across their parameter ranges (upstream latency, response/page size).
+# MCP tools across their parameter ranges (upstream latency, response/page/dataset size).
 MCP = [
     ("610.api-proxy", "small", {"latency_ms": lat, "size": size}, f"lat{lat}-{size // 1024}k")
     for lat in (50, 200, 1000) for size in (4096, 65536)
 ] + [
     ("620.fetch-markdown", "small", {"latency_ms": 200, "size": size}, f"{size // 1000}kB")
     for size in (10000, 200000, 1000000)
+] + [
+    ("630.data-analysis", "small", {"latency_ms": 200, "size": size}, f"{size // 1024}k")
+    for size in (65536, 1048576)
 ]
 VARIANTS = ("default", "sdk")  # language variants of the MCP tools
 
