@@ -27,21 +27,19 @@ and use it to answer four questions:
 
 | | Question | Where we are |
 |---|---|---|
-| Q1 | How does the time of a tool call split between startup, protocol round trips, network waits and compute? | Measured on AWS Lambda: MCP adds ±3 ms per call and 3 round trips per session; the platform adds 12–20 ms per call; API tools are their upstream's latency + ~18 ms. |
-| Q2 | How do tool calls interact with LLM calls: do they overlap? | Answered from a recorded agent run: almost never (2 of 810 turns). Needs more traces to confirm. |
-| Q3 | How large is the cold/warm difference, and how often do agent workloads trigger cold starts? | Measured on Lambda: 0.2–1.5 s at 128 MB, 0.2–0.5 s at 1769 MB, dominated by the tool's own import. Replayed sessions arriving ≤ 60 s apart see few cold starts; sparse arrivals are not measured yet. |
-| Q4 | Can the bill be predicted in advance, and do current billing models fit this workload? | First answer from Lambda: an API tool's bill is its upstream latency + 4–7 ms, so it is predictable; 95–100% of it pays for waiting, 7–91× what CPU-time billing would charge. |
+| Q1 | How does the time of a tool call split between startup, protocol round trips, network waits and compute? | Measured on AWS Lambda & GCP Cloud Run: warm MCP overhead is ±1–3 ms vs. 10–20 ms platform path; legacy handshake adds 3 RTTs (44–52 ms in-region, 182–262 ms WAN). Measured MCP `2026-07-28` on Lambda (`610-sdk`, WAN) cuts 1-call warm latency 33% and measured bill 21%. |
+| Q2 | How do tool calls interact with LLM calls: do they overlap? | Answered from LiveMCPBench trace: almost never (2 of 810 turns); tools busy 3–5% of session wall time. Needs more traces + real LLM timestamps (currently modeled, 46% stubs). |
+| Q3 | How large is the cold/warm difference, and how often do agent workloads trigger cold starts? | Measured across AWS Lambda & GCP Cloud Run (5 stack depths × 2 tiers): official MCP SDK jumps 1 vCPU cold starts to 1.95–2.00 s (AWS) / 3.62–3.66 s (GCP); `630` SDK+pandas hits 3.23 s (AWS) / 6.39 s (GCP). `610-sdk` fits 128 MB on Lambda (106 MB) but OOMs on Cloud Run (134 MiB). |
+| Q4 | Can the bill be predicted in advance, and do current billing models fit this workload? | Measured from AWS CloudWatch REPORT lines: API tool bill = upstream + 4–7 ms (predictable); 95–100% pays for waiting (7–91× CPU-time billing). Init is billed on 319/319 cold starts; legacy handshake = 8.8% of replay bill at 512 MB. |
 
 **The approach.** We extend [SeBS](https://github.com/spcl/serverless-benchmarks), the serverless
 benchmark suite from SPCL at ETH Zurich, which already deploys functions to AWS, Azure, GCP and
 local Docker and measures time, cold starts and cost. The plan has four steps:
 
-1. Teach SeBS to serve its functions as MCP tools, so the same function can be called through
-   MCP and directly, and the difference is the cost of MCP. **Done.**
-2. Find out what real MCP tools do, so the benchmark covers realistic workloads. **Done** (the census).
-3. Build one benchmark tool per common workload class. **Two of six done.**
-4. Run on real platforms: single-tool measurements, then replays of recorded agent sessions
-   with the LLM replaced by modeled waiting time. **First AWS Lambda campaign done** (2026-11-18).
+1. Teach SeBS to serve its functions as MCP tools (both legacy handshake and `2026-07-28`, in minimal and official-SDK variants), so the same deployment isolates MCP and stack cost. **Done (AWS, GCP, Azure, local).**
+2. Find out what real MCP tools do and cost to start, so the benchmark covers realistic workloads. **Done** (108-server census + 27 real servers profiled).
+3. Build census-calibrated benchmark tools in SeBS (`600.mcp/`). **Three done (`610.api-proxy`, `620.fetch-markdown`, `630.data-analysis`, each with `default` and `sdk` variants).**
+4. Run controlled cross-cloud measurements and agent trace replays. **Interim AWS + GCP campaigns done** (2026-11-18 to 2026-11-23); symmetric 3-cloud matrix (adding Azure + deployed real servers) next.
 
 **Scope.** Serverless deployment of *tools* only. Agent code sandboxes are out of scope; another
 SPCL project covers them. The original proposal and the reply that set this scope are in
@@ -58,21 +56,24 @@ SPCL project covers them. The original proposal and the reply that set this scop
 
 ## Status
 
-Everything below runs locally and is tested. The first AWS Lambda campaign ran on 2026-11-18:
-four tools, three memory sizes, cold and warm, plus trace replay ([docs/aws-results.md](docs/aws-results.md)).
+Everything below runs locally and is tested (66 unit tests). Interim campaigns on AWS Lambda
+([docs/aws-results.md](docs/aws-results.md), [docs/aws-sdk-proto-2026-11-23.md](docs/aws-sdk-proto-2026-11-23.md)),
+GCP Cloud Run gen2 ([docs/gcp-results.md](docs/gcp-results.md), [docs/idle-experiment.md](docs/idle-experiment.md)),
+and 27 real MCP servers ([docs/real-servers.md](docs/real-servers.md)) are complete; interim slides are in
+[docs/mcp-interim-slides.pptx](docs/mcp-interim-slides.pptx) ([docs/presentation-outline.md](docs/presentation-outline.md)).
 
 | Piece | State |
 |---|---|
-| MCP wrapper for SeBS (any benchmark served as an MCP tool from the same function) | done for AWS Python and the local Python server; runs on AWS Lambda; reports CPU time and import time |
-| Timing client (MCP session vs. plain invocation) | done |
-| Census of the servers in MCP-Bench, MCP-Universe, LiveMCPBench (108 servers, 822 tools) | done |
-| Tool benchmarks: `610.api-proxy`, `620.fetch-markdown`, `630.data-analysis` (heavy startup), each with an official-SDK variant, plus a mock upstream | done (630 added 2026-11-22) |
-| Agent trace (LiveMCPBench, Claude Sonnet 4 run) and replay driver | done; replayed on Lambda at three arrival rates |
-| Runs on AWS Lambda | **first campaign done** (eu-north-1; `experiments/aws_campaign.py`, `analysis/aws_results.py`) |
-| Runs on SeBS local Docker | not started (needs the run image rebuilt) |
-| Browser tool, DB tool, heavy-import tool | not started |
-| Node.js wrappers, Azure, GCP, MCP session mode / SSE on the server side | not started |
-| SeBS CLI integration (an MCP trigger type) | not started; the client takes a function URL instead |
+| MCP wrapper for SeBS (dual-path shim + official-SDK bridge, legacy & `2026-07-28`) | done for AWS, GCP, Azure, and local Docker Python |
+| Timing client (MCP session vs. plain invocation; `legacy`, `modern`, `auto`) | done |
+| Census of 108 servers / 822 tools + local startup profiling of 27 real MCP servers | done ([docs/server-census.md](docs/server-census.md), [docs/real-servers.md](docs/real-servers.md)) |
+| Tool benchmarks: `610.api-proxy`, `620.fetch-markdown`, `630.data-analysis` (`default` + `sdk` variants) + mock upstream | done |
+| Agent trace (LiveMCPBench, Claude Sonnet 4 run) and replay driver | done; replayed on AWS & GCP (needs stub filtering + more traces) |
+| Runs on AWS Lambda | done: stdlib E1–E5 (2026-11-18) + SDK/`630`/`2026-07-28` (2026-11-23) |
+| Runs on GCP Cloud Run gen2 | done: E1–E4 + SDK cold starts + `630` + 15-min idle cliff |
+| Runs on SeBS local Docker (incl. 12-benchmark SeBS gap comparison) | done ([docs/results-local.md](docs/results-local.md)) |
+| Azure Functions campaign, concurrency > 1, stateful sessions, deployed real servers | planned for final deliverable |
+| SeBS CLI integration & upstream PRs into `anveba/serverless-benchmarks` | planned for final deliverable |
 
 ## Results so far
 

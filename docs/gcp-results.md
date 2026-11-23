@@ -52,6 +52,7 @@ the AWS raw data isn't on this machine.
    In the replay, handshake requests are 30% of invocations, 18–20% of billable time and 23–24% of the
    cost; on Lambda they were 2.4% of GB-s and 8.8% of the bill. MCP 2026-07-28 drops the handshake, so on GCP
    the protocol revision is a cost question, not only a latency one.
+   *Note (2026-11-23):* the AWS replay ran at 512 MB whereas GCP ran at 128 MB (where the official SDK OOMs on Cloud Run), so replay billing shares are not 1:1 comparable across clouds until both run at matched tiers. Cloud Run `europe-west1` list prices (`$0.000024/vCPU-s`, `$0.0000025/GiB-s`, `$0.40/M` requests) and 100 ms request-based rounding were verified on 2026-11-23.
 9. **Replayed agent sessions (128 MB, boost on):** with a session every second (18 concurrent), the 4 tools used
    15 instances. 7 were pre-started by the deploy and 8 started by requests; only 3 requests had to wait for an
    instance to boot. At 10 s and 60 s arrivals, 5 and 4 instances. Tools are busy 4–5% of session time.
@@ -73,10 +74,7 @@ the AWS raw data isn't on this machine.
 
 ## Caveats
 
-- **Prices and billing rule unverified.** The billing figures use Cloud Run's 2025 list prices for Tier 1 regions
-  ($0.000024/vCPU-s, $0.0000025/GiB-s, $0.40 per million requests) and per-request rounding up to 100 ms. The price
-  page couldn't be fetched on 2026-11-22. Check both before presenting $ figures or the rounding finding.
-  Billable time is approximated by the request-log latency, which includes the front end.
+- **Billing computed from published list prices, not GCP invoices.** Prices for `europe-west1` (`$0.000024/vCPU-s`, `$0.0000025/GiB-s`, `$0.40/M` requests) and 100 ms rounding were verified on 2026-11-23; billable time is approximated by request-log latency, which includes the front end.
 - Cloud Run's request-log latency is not reliable for cold starts: it left out most of the startup in the campaign's
   held sessions but included it for natural cold starts after idling (2026-11-22). Cold-start times come from the
   client and the startup-probe timestamps.
